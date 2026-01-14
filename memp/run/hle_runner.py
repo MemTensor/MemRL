@@ -668,12 +668,16 @@ class HLERunner(BaseRunner):
         }
         gen_error = None
         try:
-            output = self.llm.generate(
-                messages,
+            kwargs = dict(
+                messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                reasoning_effort="high"
             )
+
+            if self.llm.model == "gpt-5.2":
+                kwargs["reasoning_effort"] = "high"
+
+            output = self.llm.generate(**kwargs)
 
         except Exception as e:
             logger.error("LLM error: %s", e)

@@ -238,8 +238,6 @@ class MempAgent(BaseAgent):
                 logger.warning(f"Action parsing failed for response='{response}': {e}")
                 action = "inventory"
 
-        logger.info(f"LLM decided on action: '{action}'")
-
         return action
 
 

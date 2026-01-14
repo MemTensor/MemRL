@@ -19,7 +19,7 @@ from memp.run.hle_runner import HLERunner, HLESelection
 
 def setup_logging(project_root: Path, name: str):
     log_dir = project_root / "logs" / name
-    log_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
     import time
     log_filename = f"{name}_{time.strftime('%Y%m%d-%H%M%S')}.log"
     log_filepath = log_dir / log_filename

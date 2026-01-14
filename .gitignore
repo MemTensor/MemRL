@@ -1,11 +1,12 @@
 logs/
 results/
 data/
-configs/
+/configs/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.memos/
 .vscode/
 .mem0/
 .selfrag/

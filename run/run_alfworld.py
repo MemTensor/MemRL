@@ -22,7 +22,7 @@ from memp.run.alfworld_rl_runner import AlfworldRunner
 
 def setup_logging(project_root: Path, name: str):
     log_dir = project_root / "logs" / name
-    log_dir.mkdir(exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
     log_filename = f"{name}_{time.strftime('%Y%m%d-%H%M%S')}.log"
     log_filepath = log_dir / log_filename
     root_logger = logging.getLogger()

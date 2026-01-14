@@ -1,0 +1,145 @@
+Metadata-Version: 2.4
+Name: memp
+Version: 0.1.0
+Summary: Procedural Memory Implementation for Agent Learning
+Author-email: Memp Team <team@memp.dev>
+License: MIT
+Project-URL: Homepage, https://github.com/memp-team/memp
+Project-URL: Repository, https://github.com/memp-team/memp.git
+Project-URL: Documentation, https://memp-team.github.io/memp
+Project-URL: Bug Tracker, https://github.com/memp-team/memp/issues
+Keywords: memory,agent,procedural-memory,memp,ai,llm
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: MemoryOS>=1.0.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: pandas>=2.0.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: click>=8.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: tenacity>=8.0.0
+Requires-Dist: textworld>=1.6.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: black>=23.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Requires-Dist: pre-commit>=3.0.0; extra == "dev"
+
+# Memp: Procedural Memory for Agent Learning
+
+Memp是基于论文 "Memp: Exploring Agent Procedural Memory" 的完整复现实现，提供智能体的程序化记忆管理系统。
+
+## 特性
+
+- 🧠 **三阶段记忆管理**: Build/Retrieve/Update
+- 🔄 **9种策略组合**: 3种Build × 3种Retrieve × 3种Update策略
+- 🏗️ **模块化架构**: 基于MemOS的可扩展记忆系统
+- 🎯 **双环境支持**: TravelPlanner和ALFWorld基准测试
+- 🛠️ **CLI工具**: 完整的命令行工具支持
+- 📊 **实验评估**: 完整的Ablation研究和性能对比
+
+## 核心算法
+
+### Build阶段（构建策略）
+- **Trajectory**: 直接存储完整的成功任务轨迹
+- **Script**: 仅存储LLM生成的高层抽象脚本
+- **Proceduralization**: 同时存储轨迹和脚本（主方法）
+
+### Retrieve阶段（检索策略）
+- **Random Sample**: 随机检索记忆作为基线对比
+- **Key=Query**: 使用原始任务描述向量作为检索键（当前默认）
+- **Key=AveFact**: 使用关键词平均向量作为检索键（暂不作为默认）
+
+### Update阶段（更新策略）
+- **Vanilla Memory Update**: 直接添加所有新完成的任务轨迹
+- **Validation**: 仅添加成功轨迹，过滤失败轨迹
+- **Adjustment**: 失败后反思修正已有记忆（主方法）
+
+**推荐组合**: Proceduralization + Query + Adjustment
+
+## 快速开始
+
+### 安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/memp-team/memp.git
+cd memp
+```
+
+
+## 项目结构
+
+```
+memp/
+├── memp/                   # 主包
+│   ├── providers/         # LLM和Embedding提供者
+│   ├── service/          # 记忆服务核心
+│   ├── envs/             # 环境封装
+│   ├── configs/          # 配置管理
+│   ├── cli/              # CLI工具
+│   └── utils/            # 工具函数
+├── configs/              # 配置文件
+├── docs/                 # 文档
+├── tests/               # 测试
+└── README.md
+```
+
+
+
+
+
+
+## 重要更新（Phase 2）
+
+- 统一写入路径：使用 text_mem.add/update，获得真实 memory_id，并精细控制 metadata
+- 检索键与存储内容分离：
+  - TextualMemoryItem.memory 仅保存任务描述（用于向量检索）
+  - TextualMemoryItem.metadata.full_content 保存完整内容（任务描述 + 轨迹/脚本/反思）
+- Update 策略采用与 Build/Retrieve 一致的策略模式（updater.py）：
+  - Vanilla：无条件新增
+  - Validation：仅成功时新增
+  - Adjustment：失败时追加“反思记忆”（append，默认）或就地更新（inplace）
+- 本地 Qdrant 存储路径按 user_id 隔离，避免并发锁冲突；Demo 每次运行使用唯一 user_id
+
+### 时间戳化的 Memory Cube（Experiment timestamped cubes）
+
+- 从现在起，`MemoryService` 初始化时会为 mem cube 与 Qdrant collection 加上时间戳后缀，形成历史隔离：
+  - 目录：`./results/mem_cubes/<user_id>/<YYYYmmdd_HHMMSS>/`
+  - cube_id：`cube_<user_id>_<YYYYmmdd_HHMMSS>`
+  - Qdrant collection：`memp_<user_id>_<YYYYmmdd_HHMMSS>`
+- 这样可并行或多次实验且互不影响，同时可按时间戳回溯历史记忆。
+- 常用方法：
+  - 列出当前 user 历史时间戳：
+    ```python
+    memory_service.list_available_cube_timestamps()
+    ```
+  - 获取当前默认 cube：
+    ```python
+    memory_service.get_current_cube_id()
+    ```
+  - 切换到历史时间戳：
+    ```python
+    memory_service.switch_to_cube_timestamp("20250101_120000")
+    ```
+
+## 快速演示（Build → Retrieve → Update）
+
+- 演示脚本：memp/tests/build_integration_tests/run_build_demo.py
+- 核心流程：
+  1) Build：memory=task_description，metadata.full_content=Task+内容
+  2) Retrieve：以 task_description 做语义检索，返回 content=full_content
+  3) Update：按策略新增/调整，返回真实 memory_id
+- 更多说明参见：memp/tests/build_integration_tests/demo_des.md

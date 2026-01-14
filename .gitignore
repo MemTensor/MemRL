@@ -1,0 +1,11 @@
+logs/
+results/
+data/
+configs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.vscode/
+.mem0/
+.selfrag/

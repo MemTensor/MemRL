@@ -1,0 +1,2 @@
+[console_scripts]
+memp = memp.cli.main:cli

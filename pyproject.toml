@@ -1,0 +1,106 @@
+[project]
+name = "memp"
+version = "0.1.0"
+description = "Procedural Memory Implementation for Agent Learning"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Memp Team", email = "team@memp.dev"}
+]
+keywords = [
+    "memory",
+    "agent",
+    "procedural-memory",
+    "memp",
+    "ai",
+    "llm"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "MemoryOS>=1.0.0",
+    "openai>=1.0.0",
+    "pandas>=2.0.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+    "pydantic>=2.0",
+    "numpy>=1.24.0",
+    "tenacity>=8.0.0",
+    "textworld>=1.6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.scripts]
+memp = "memp.cli.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/memp-team/memp"
+Repository = "https://github.com/memp-team/memp.git"
+Documentation = "https://memp-team.github.io/memp"
+"Bug Tracker" = "https://github.com/memp-team/memp/issues"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "--cov=memp",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "-v"
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C",  # flake8-comprehensions
+    "B",  # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long, handled by black
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

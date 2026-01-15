@@ -1064,72 +1064,27 @@ class MemoryService:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
-        Add a new memory entry into the system.
+        Add a single memory entry into the system.
 
-        If a similar query already exists (based on retrieved_memory_query and score threshold),
-        attach this new trajectory under that query; otherwise, create a new query entry.
-
-        Also stores query embedding to avoid recomputation during future retrievals.
+        This is a thin wrapper around `add_memories()` to avoid maintaining two
+        divergent implementations. It preserves the historical single-item API
+        while reusing the batch-safe update/write path.
         """
         try:
-            # Initialize storage if not present
-            if not hasattr(self, "dict_memory"):
-                self.dict_memory = {}
-            if not hasattr(self, "query_embeddings"):
-                self.query_embeddings = {}
-
-            matched_query = None
-            best_score = -1.0
-            similarity_threshold = getattr(self, "add_similarity_threshold", 0.8)
-
-            if retrieved_memory_query:
-                for query, score in retrieved_memory_query:
-                    if score >= similarity_threshold and score > best_score:
-                        matched_query = query
-                        best_score = score
-
-            metadata |= {
-                "q_value": float(self.rl_config.q_init),
-                "q_visits": 0,
-                "q_updated_at": datetime.now().isoformat(),
-                "last_used_at": datetime.now().isoformat(),
-                "reward_ma": 0.0,
-            }
-            memory_id = self.update_memory(
-                task_description=task_description,
-                trajectory=trajectory,
-                success=success,
-                retrieved_memory_ids=retrieved_memory_ids,
-                metadata=metadata,
+            results = self.add_memories(
+                task_descriptions=[task_description],
+                trajectories=[trajectory],
+                successes=[bool(success)],
+                retrieved_memory_queries=[retrieved_memory_query],
+                retrieved_memory_ids_list=[retrieved_memory_ids],
+                metadatas=[metadata],
             )
-
-            if not memory_id:
+            if not results:
                 return None
-
-            if matched_query:
-                if matched_query not in self.dict_memory:
-                    self.dict_memory[matched_query] = []
-                self.dict_memory[matched_query].append(memory_id)
-            else:
-                self.dict_memory[task_description] = [memory_id]
-
-                if getattr(self, "embedding_provider", None):
-                    embed = getattr(self.embedding_provider, "embed", None)
-                    if callable(embed):
-                        try:
-                            vec = embed([task_description])[0]
-                            self.query_embeddings[task_description] = vec
-                            logger.info(
-                                f"Cached embedding for new query: {task_description[:40]}..."
-                            )
-                        except Exception:
-                            logger.info(
-                                f"Failed to embed query '{task_description}'",
-                                exc_info=True,
-                            )
-
-            return memory_id
-
+            first = results[0]
+            if isinstance(first, (list, tuple)) and len(first) >= 2:
+                return first[1]
+            return None
         except Exception as e:
             import traceback
 

@@ -10,3 +10,6 @@ __pycache__/
 .vscode/
 .mem0/
 .selfrag/
+code_review/
+docs/
+tests/

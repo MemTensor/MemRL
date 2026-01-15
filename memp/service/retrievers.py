@@ -11,7 +11,7 @@ mirroring builders.py for build strategies. It centralizes:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import random
 
 from memos.mem_os.main import MOS
@@ -23,6 +23,98 @@ from ..providers.embedding import AverageEmbedder
 
 
 # ---------- Utilities ----------
+
+def _extract_item_and_score(hit: Any) -> Tuple[Optional[TextualMemoryItem], Optional[float]]:
+    """Normalize various hit shapes into (TextualMemoryItem, score).
+
+    Supported shapes:
+    - TextualMemoryItem (score=None)
+    - {'item': TextualMemoryItem, 'score': float}
+    - qdrant-like hit with attributes: payload (dict) and score (float)
+    """
+    if hit is None:
+        return None, None
+
+    # Dict hit: {'item': ..., 'score': ...}
+    if isinstance(hit, dict) and "item" in hit:
+        item = hit.get("item")
+        score = hit.get("score")
+        try:
+            score_f = float(score) if score is not None else None
+        except Exception:
+            score_f = None
+        return item, score_f
+
+    # Qdrant-like hit: has payload + score
+    payload = getattr(hit, "payload", None)
+    if isinstance(payload, dict):
+        try:
+            item = TextualMemoryItem(**payload)
+        except Exception:
+            item = None
+        score = getattr(hit, "score", None)
+        try:
+            score_f = float(score) if score is not None else None
+        except Exception:
+            score_f = None
+        return item, score_f
+
+    # Plain item
+    if isinstance(hit, TextualMemoryItem) or hasattr(hit, "memory"):
+        return hit, None
+
+    return None, None
+
+
+def _extract_full_content(metadata: Any) -> Optional[str]:
+    """Best-effort extraction of full_content from metadata."""
+    if metadata is None:
+        return None
+    try:
+        # Pydantic v2: extra fields are in model_dump/model_extra
+        if hasattr(metadata, "model_extra"):
+            fc = metadata.model_extra.get("full_content")
+            if isinstance(fc, str) and fc:
+                return fc
+    except Exception:
+        pass
+    try:
+        if hasattr(metadata, "model_dump"):
+            md = metadata.model_dump()
+            fc = md.get("full_content")
+            if isinstance(fc, str) and fc:
+                return fc
+    except Exception:
+        pass
+    try:
+        fc = getattr(metadata, "full_content", None)
+        if isinstance(fc, str) and fc:
+            return fc
+    except Exception:
+        pass
+    if isinstance(metadata, dict):
+        fc = metadata.get("full_content")
+        if isinstance(fc, str) and fc:
+            return fc
+    return None
+
+
+def _extract_similarity_fallback(metadata: Any) -> float:
+    """Fallback similarity when a hit has no explicit score."""
+    # User decision: missing score is treated as 0.0 for filtering; keep same here.
+    try:
+        if metadata is None:
+            return 0.0
+        if isinstance(metadata, dict):
+            return float(metadata.get("relativity", 0.0) or 0.0)
+        # Some MemOS versions may expose relativity directly
+        rel = getattr(metadata, "relativity", None)
+        if rel is not None:
+            return float(rel)
+    except Exception:
+        pass
+    return 0.0
+
 
 def _flatten_text_mem_results(result: Dict[str, Any]) -> List[TextualMemoryItem]:
     """Flatten MemOS MOSSearchResult text_mem section into a plain list of items.
@@ -53,39 +145,28 @@ def _format_memory_result(item: Any) -> Dict[str, Any]:
     - similarity: float (uses metadata.relativity if present)
     - memory_item: original object
     """
-    if hasattr(item['item'], "memory"):
-        metadata = getattr(item['item'], "metadata", None)
-        similarity = item['score']
-        full_content = None
-        try:
-            if metadata is not None and hasattr(metadata, "model_dump"):
-                md = metadata.model_dump()
-                full_content = md.get("full_content")
-            else:
-                full_content = getattr(metadata, "full_content", None)
-        except Exception:
-            full_content = None
-        content = full_content or getattr(item['item'], "memory", "")
+    mem_item, score = _extract_item_and_score(item)
+    if mem_item is None:
+        # Fail closed but keep schema stable.
         return {
-            "memory_id": getattr(item['item'], "id", "unknown"),
-            "content": content,
-            "metadata": metadata,
-            "similarity": similarity,
-            "memory_item": item['item'],
+            "memory_id": "unknown",
+            "content": str(item),
+            "metadata": {},
+            "similarity": 0.0,
+            "memory_item": item,
         }
-    # Fallback for dict-like items
-    m = item if isinstance(item, dict) else {}
-    md = m.get("metadata", {})
-    if isinstance(md, dict):
-        full_content = md.get("full_content")
-    else:
-        full_content = None
+
+    metadata = getattr(mem_item, "metadata", None)
+    full_content = _extract_full_content(metadata)
+    content = full_content or getattr(mem_item, "memory", "")
+    similarity = float(score) if score is not None else _extract_similarity_fallback(metadata)
+
     return {
-        "memory_id": m.get("id", "unknown"),
-        "content": full_content or m.get("memory", str(item)),
-        "metadata": md,
-        "similarity": m['score'],
-        "memory_item": item,
+        "memory_id": getattr(mem_item, "id", "unknown"),
+        "content": content,
+        "metadata": metadata,
+        "similarity": similarity,
+        "memory_item": mem_item,
     }
 
 
@@ -115,11 +196,27 @@ class RandomRetriever(BaseRetriever):
 
 class QueryRetriever(BaseRetriever):
     def retrieve(self, task_description: str, k: int, threshold: float) -> List[Dict[str, Any]]:
-        res = self.mos.search_score(query=task_description, user_id=self.user_id, top_k=k)
+        # MemOS API compatibility: some versions don't provide search_score().
+        search_score = getattr(self.mos, "search_score", None)
+        if callable(search_score):
+            res = search_score(query=task_description, user_id=self.user_id, top_k=k)
+        else:
+            search = getattr(self.mos, "search", None)
+            if not callable(search):
+                raise AttributeError("MOS has neither search_score() nor search()")
+            res = search(query=task_description, user_id=self.user_id, top_k=k)
         items = _flatten_text_mem_results(res)
-        if threshold > 0:
-            items = [x for x in items if x['score'] >= threshold]
-        return [_format_memory_result(x) for x in items[:k]]
+        out: List[Dict[str, Any]] = []
+        for x in items:
+            mem_item, score = _extract_item_and_score(x)
+            # User decision: missing score is treated as 0.0 for filtering.
+            sim = float(score) if score is not None else 0.0
+            if threshold > 0 and sim < threshold:
+                continue
+            out.append(_format_memory_result(x))
+            if len(out) >= k:
+                break
+        return out
 
 
 class AveFactRetriever(BaseRetriever):

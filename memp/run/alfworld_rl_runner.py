@@ -53,7 +53,7 @@ class AlfworldRunner(BaseRunner):
     environment instances upfront.
     """
     def __init__(self, agent: MempAgent, root: str, env_config: str, memory_service: MemoryService, exp_name: str,
-                 num_section: int, batch_size: int, max_steps: int, rl_config, retrieve_k: int=1, mode: str='train',
+                 num_section: int, batch_size: int, max_steps: int, rl_config, ck_dir:str, retrieve_k: int=1, mode: str='train',
                  valid_interval: int=2, test_interval: int=2, dataset_ratio: float=1.0, random_seed: int=42, bon: int=0,
                  ckpt_resume_enabled: bool = False, ckpt_resume_path: Optional[str] = None, ckpt_resume_epoch: Optional[int] = None,
                  baseline_mode: Optional[str] = None, baseline_k: int = 10):
@@ -114,7 +114,7 @@ class AlfworldRunner(BaseRunner):
         tb_log_dir = self.root / "logs" / "tensorboard" / f"exp_{self.exp_name}_{time.strftime('%Y%m%d-%H%M%S')}"
         self.writer = SummaryWriter(log_dir=str(tb_log_dir))
         logger.info(f"TensorBoard logs will be saved to: {tb_log_dir}")
-        self.ck_dir = self.root / "results" / "alfworld" / f"exp_{self.exp_name}_{time.strftime('%Y%m%d-%H%M%S')}"
+        self.ck_dir = ck_dir
         if self.ckpt_resume_enabled and self.ckpt_resume_path:
             resume_root = Path(self.ckpt_resume_path)
             if resume_root.name == "snapshot":

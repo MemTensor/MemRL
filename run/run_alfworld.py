@@ -158,6 +158,7 @@ def main():
             env_config=alfworld_config_path,
             memory_service=memory_service,
             exp_name=cfg.experiment.experiment_name,
+            ck_dir=log_dir,
             random_seed=cfg.experiment.random_seed,
             num_section=cfg.experiment.num_sections,
             batch_size=cfg.experiment.batch_size,

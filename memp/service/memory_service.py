@@ -184,6 +184,35 @@ def _parse_datetime(value: Any) -> datetime | None:
     return None
 
 
+def _coerce_success(value: Any) -> Optional[bool]:
+    """Parse a best-effort boolean success flag.
+
+    Returns:
+        True / False if value can be reliably interpreted, otherwise None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 0:
+            return False
+        if value == 1:
+            return True
+        return None
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if not s:
+            return None
+        if s in {"true", "t", "yes", "y", "1"}:
+            return True
+        if s in {"false", "f", "no", "n", "0"}:
+            return False
+        # Treat "unknown"/"n/a" and other strings as unknown
+        return None
+    return None
+
+
 class MemoryService:
     """
     Core memory service implementing the Memp procedural memory algorithms.
@@ -409,7 +438,8 @@ class MemoryService:
         try:
             # Extract source benchmark from metadata
             source_benchmark = (metadata or {}).get("source_benchmark", "unknown")
-            success = (metadata or {}).get("success", "unknown")
+            raw_success = (metadata or {}).get("success", None)
+            success = _coerce_success(raw_success)
 
             # Use Builder pattern to generate memory content
             builder = get_builder(self.strategy_config.build, self.llm_provider)
@@ -505,6 +535,7 @@ class MemoryService:
                 "type": "procedure",
                 "source": "conversation",
                 "source_benchmark": source_benchmark,
+                "success": success,
                 "strategy_build": self.strategy_config.build.value,
                 "strategy_retrieve": self.strategy_config.retrieve.value,
                 "strategy_update": self.strategy_config.update.value,
@@ -516,10 +547,12 @@ class MemoryService:
                 getattr(self, "enable_value_driven", False)
                 and getattr(self, "rl_config", None) is not None
             ):
+                # User-selected behavior: unknown success defaults to q_init_pos.
+                is_success = True if success is None else bool(success)
                 base_meta |= {
                     "q_value": (
                         float(self.rl_config.q_init_pos)
-                        if success
+                        if is_success
                         else float(self.rl_config.q_init_neg)
                     ),
                     "q_visits": 0,
@@ -850,7 +883,8 @@ class MemoryService:
 
         # Extract source benchmark from metadata
         source_benchmark = (metadata or {}).get("source_benchmark", "unknown")
-        success = (metadata or {}).get("success", False)
+        raw_success = (metadata or {}).get("success", None)
+        success = _coerce_success(raw_success)
         # Use Builder pattern to generate memory content
         builder = get_builder(self.strategy_config.build, self.llm_provider)
         memory_content = builder.build(task_description, trajectory)
@@ -941,10 +975,12 @@ class MemoryService:
             getattr(self, "enable_value_driven", False)
             and getattr(self, "rl_config", None) is not None
         ):
+            # User-selected behavior: unknown success defaults to q_init_pos.
+            is_success = True if success is None else bool(success)
             base_meta |= {
                 "q_value": (
                     float(self.rl_config.q_init_pos)
-                    if success
+                    if is_success
                     else float(self.rl_config.q_init_neg)
                 ),
                 "q_visits": 0,

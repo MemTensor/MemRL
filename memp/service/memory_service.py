@@ -184,6 +184,37 @@ def _parse_datetime(value: Any) -> datetime | None:
     return None
 
 
+def _resolve_snapshot_dirs(
+    snapshot_root: str, meta: Optional[Dict[str, Any]]
+) -> tuple[str, str, int]:
+    """Resolve snapshot cube/qdrant directories from optional snapshot_meta.json.
+
+    IMPORTANT: meta["qdrant_dir"] may be None if qdrant copy failed during save.
+    Treat None/empty as "missing" and fall back to <snapshot_root>/qdrant.
+    """
+    import os
+
+    cube_dir = os.path.join(snapshot_root, "cube")
+    qdrant_dir = os.path.join(snapshot_root, "qdrant")
+    checkpoint_id = 0
+
+    if isinstance(meta, dict):
+        try:
+            cube_dir = meta.get("cube_dir") or cube_dir
+        except Exception:
+            pass
+        try:
+            qdrant_dir = meta.get("qdrant_dir") or qdrant_dir
+        except Exception:
+            pass
+        try:
+            checkpoint_id = int(meta.get("checkpoint_id", checkpoint_id))
+        except Exception:
+            checkpoint_id = 0
+
+    return cube_dir, qdrant_dir, checkpoint_id
+
+
 def _coerce_success(value: Any) -> Optional[bool]:
     """Parse a best-effort boolean success flag.
 
@@ -1554,8 +1585,22 @@ class MemoryService:
         qdrant_src = getattr(self, "_qdrant_dir", None)
         qdrant_copied = False
         if qdrant_src and os.path.isdir(qdrant_src):
-            shutil.copytree(qdrant_src, qdrant_dst)
-            qdrant_copied = True
+            try:
+                shutil.copytree(qdrant_src, qdrant_dst)
+                qdrant_copied = True
+            except Exception:
+                # Snapshot can still be loadable (qdrant can be rebuilt from cube dump),
+                # but we must not write qdrant_dir=None to meta (it breaks loaders).
+                logger.warning(
+                    "Failed to copy qdrant dir from %s to %s; will keep empty qdrant dir and continue.",
+                    qdrant_src,
+                    qdrant_dst,
+                    exc_info=True,
+                )
+                try:
+                    os.makedirs(qdrant_dst, exist_ok=True)
+                except Exception:
+                    pass
         # 3) 统计与校验
         textual_path = os.path.join(cube_dst, "textual_memory.json")
         md5 = None
@@ -1582,7 +1627,9 @@ class MemoryService:
             "cube_timestamp": getattr(self, "_cube_timestamp", None),
             "checkpoint_id": ckpt_id,
             "cube_dir": cube_dst,
-            "qdrant_dir": qdrant_dst if qdrant_copied else None,
+            # Always write a string path so load_checkpoint_snapshot can safely use it.
+            # If qdrant files weren't copied, loader may rebuild the local DB.
+            "qdrant_dir": qdrant_dst,
             "textual_memory_md5": md5,
             "visible_memories": total_count,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -1645,9 +1692,9 @@ class MemoryService:
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-                cube_dir = meta.get("cube_dir", cube_dir)
-                qdrant_dir = meta.get("qdrant_dir", qdrant_dir)
-                checkpoint_id = int(meta.get("checkpoint_id", 0))
+                cube_dir, qdrant_dir, checkpoint_id = _resolve_snapshot_dirs(
+                    snapshot_root, meta
+                )
             except Exception:
                 pass
         if not os.path.isdir(cube_dir):
@@ -1691,10 +1738,12 @@ class MemoryService:
         )
         # 载入并注册
         # Ensure qdrant directory exists; QdrantLocal will create internal sqlite files.
+        if not isinstance(qdrant_dir, str) or not qdrant_dir:
+            qdrant_dir = os.path.join(snapshot_root, "qdrant")
         try:
             os.makedirs(qdrant_dir, exist_ok=True)
         except Exception:
-            pass
+            logger.warning("Failed to ensure qdrant_dir exists: %r", qdrant_dir, exc_info=True)
 
         def _is_sqlite_malformed(err: Exception) -> bool:
             msg = str(err).lower()

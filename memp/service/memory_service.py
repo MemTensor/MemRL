@@ -1424,18 +1424,38 @@ class MemoryService:
                         str(rid) for rid in retrieved_ids if rid
                     ]
 
-                # attach RL-style meta defaults (mirrors single add_memory)
-                meta |= {
-                    "q_value": float(
-                        getattr(
-                            self, "rl_config", type("X", (), {"q_init": 0.0})
-                        ).q_init_pos
-                    ),
-                    "q_visits": 0,
-                    "q_updated_at": datetime.now().isoformat(),
-                    "last_used_at": datetime.now().isoformat(),
-                    "reward_ma": 0.0,
-                }
+                # Attach RL-style meta defaults.
+                #
+                # IMPORTANT: do NOT blindly override upstream metadata (runner may
+                # provide q_value based on success/failure). Only fill missing
+                # fields, and when q_value is missing/invalid, initialize from
+                # q_init_pos/q_init_neg according to the success flag.
+                meta.setdefault("success", bool(succ))
+
+                rl_cfg = getattr(self, "rl_config", None)
+                try:
+                    q_init_pos = float(getattr(rl_cfg, "q_init_pos", 0.0))
+                except Exception:
+                    q_init_pos = 0.0
+                try:
+                    q_init_neg = float(getattr(rl_cfg, "q_init_neg", 0.0))
+                except Exception:
+                    q_init_neg = 0.0
+
+                default_q = q_init_pos if bool(succ) else q_init_neg
+                if "q_value" not in meta or meta.get("q_value") is None:
+                    meta["q_value"] = default_q
+                else:
+                    # If provided but not castable, fall back to the default.
+                    try:
+                        meta["q_value"] = float(meta["q_value"])
+                    except Exception:
+                        meta["q_value"] = default_q
+
+                meta.setdefault("q_visits", 0)
+                meta.setdefault("q_updated_at", datetime.now().isoformat())
+                meta.setdefault("last_used_at", datetime.now().isoformat())
+                meta.setdefault("reward_ma", 0.0)
 
                 # append to parallel lists
                 td_list.append(td[:4096])  # Truncate to avoid excessive length)

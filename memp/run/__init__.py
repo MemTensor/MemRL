@@ -1,16 +1,8 @@
-"""Benchmark runners."""
+"""Benchmark runners.
 
-from .hle_runner import HLERunner, HLESelection
-from .llb_rl_runner import LLBRunner
-from .alfworld_rl_runner import AlfworldRunner
-from .bcb_runner import BCBRunner, BCBSelection
+Keep this module import-light: some runners depend on optional heavyweight
+dependencies (e.g. torch/tensorboard, alfworld). Import runners directly from
+their modules, e.g. `from memp.run.bcb_runner import BCBRunner`.
+"""
 
-__all__ = [
-    "HLERunner",
-    "HLESelection",
-    "LLBRunner",
-    "AlfworldRunner",
-    "BCBRunner",
-    "BCBSelection",
-]
-
+__all__: list[str] = []

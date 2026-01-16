@@ -92,21 +92,80 @@ class MempBCBDecoder:
             return "", [], {}
 
         if self._rl:
-            vd = self._mem.retrieve_value_aware(query, k=self._k, threshold=self._threshold)
+            # NOTE: MemoryService.retrieve_value_aware() can return two shapes:
+            # - value-driven enabled: {"actions": [...], "selected": [...], "candidates": [...], "simmax": ...}
+            # - value-driven disabled: {"action": "id", "selected": {...}, "candidates": [...], "simmax": ...}
+            vd = self._mem.retrieve_value_aware(
+                query, k=self._k, threshold=self._threshold
+            )
             candidates = list(vd.get("candidates") or [])
-            simmax = float(vd.get("simmax", 0.0) or 0.0)
 
-            # Select top-k candidates by similarity (value-aware ordering can be added later).
-            try:
-                candidates.sort(key=lambda x: float(x.get("similarity", 0.0) or 0.0), reverse=True)
-            except Exception:
-                pass
-            selected = [c for c in candidates if float(c.get("similarity", 0.0) or 0.0) >= self._threshold][: self._k]
-            selected_ids = [str(c.get("memory_id") or c.get("id")) for c in selected if (c.get("memory_id") or c.get("id"))]
+            # Prefer the service's selected set (this is where ε-greedy / value-driven logic lives).
+            raw_selected = vd.get("selected")
+            if isinstance(raw_selected, dict):
+                selected = [raw_selected]
+            elif isinstance(raw_selected, list):
+                selected = list(raw_selected)
+            else:
+                selected = []
+
+            raw_actions = vd.get("actions")
+            if raw_actions is None:
+                one = vd.get("action")
+                raw_actions = [one] if one else []
+            actions = [str(a) for a in (raw_actions or []) if a]
+
+            if not selected and actions:
+                # Map actions -> candidate dicts (best-effort).
+                by_id = {
+                    str(c.get("memory_id") or c.get("id")): c
+                    for c in candidates
+                    if (c.get("memory_id") or c.get("id"))
+                }
+                selected = [by_id[a] for a in actions if a in by_id]
+
+            if not selected:
+                # Fallback: similarity-only top-k (should be rare, but keeps robustness).
+                try:
+                    candidates.sort(
+                        key=lambda x: float(x.get("similarity", 0.0) or 0.0),
+                        reverse=True,
+                    )
+                except Exception:
+                    pass
+                selected = [
+                    c
+                    for c in candidates
+                    if float(c.get("similarity", 0.0) or 0.0) >= self._threshold
+                ][: self._k]
+
+            selected_ids = [
+                str(c.get("memory_id") or c.get("id"))
+                for c in selected
+                if (c.get("memory_id") or c.get("id"))
+            ]
+
+            simmax = float(vd.get("simmax", 0.0) or 0.0)
+            if simmax <= 0.0:
+                try:
+                    simmax = max(
+                        (float(c.get("similarity", 0.0) or 0.0) for c in candidates),
+                        default=0.0,
+                    )
+                except Exception:
+                    simmax = 0.0
             return (
                 self._format_memory_context(selected),
                 selected_ids,
-                {"mode": "rl", "k": self._k, "threshold": self._threshold, "simmax": simmax, "retrieved_count": len(candidates)},
+                {
+                    "mode": "rl",
+                    "k": self._k,
+                    "threshold": self._threshold,
+                    "simmax": simmax,
+                    "retrieved_count": len(candidates),
+                    "selected_count": len(selected_ids),
+                    "actions": actions,
+                },
             )
 
         # RL-off: similarity-only retrieval
@@ -165,4 +224,3 @@ class MempBCBDecoder:
             out.append([code])
 
         return out
-

@@ -55,8 +55,6 @@ class BCBRunner:
         temperature: float = 0.0,
         max_tokens: int = 1280,
         retrieve_k: int = 5,
-        retrieve_threshold: float = 0.2,
-        rl_enabled: bool = False,
         bcb_repo: Optional[str] = None,
         untrusted_hard_timeout_s: float = 120.0,
         eval_timeout_s: float = 60.0,
@@ -71,8 +69,6 @@ class BCBRunner:
         self.temperature = float(temperature)
         self.max_tokens = int(max_tokens)
         self.retrieve_k = int(retrieve_k)
-        self.retrieve_threshold = float(retrieve_threshold)
-        self.rl_enabled = bool(rl_enabled)
         self.bcb_repo = bcb_repo
         self.untrusted_hard_timeout_s = float(untrusted_hard_timeout_s)
         self.eval_timeout_s = float(eval_timeout_s)
@@ -410,9 +406,6 @@ class BCBRunner:
             "retrieve_k": self.retrieve_k,
             # Aligned threshold knob across benchmarks:
             "retrieve_threshold": self._get_retrieve_threshold(),
-            # Kept for traceability; not used when running in aligned mode.
-            "legacy_retrieve_threshold_arg": self.retrieve_threshold,
-            "rl_enabled": self.rl_enabled,
             "bcb_repo": self.bcb_repo,
             "created_at": datetime.now().isoformat(),
         }

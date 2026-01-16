@@ -42,8 +42,6 @@ class MempBCBDecoder:
         max_new_tokens: int = 1280,
         system_prompt: str = "",
         retrieve_k: int = 5,
-        retrieve_threshold: float = 0.2,
-        rl_enabled: bool = False,
         memory_budget_tokens: int = 2000,
     ) -> None:
         self.name = name
@@ -53,8 +51,6 @@ class MempBCBDecoder:
         self.max_new_tokens = int(max_new_tokens)
         self._sys_prompt = str(system_prompt or "")
         self._k = int(retrieve_k)
-        self._threshold = float(retrieve_threshold)
-        self._rl = bool(rl_enabled)
         self._budget = int(memory_budget_tokens)
 
         # per-prompt traces (used by runner for logging + RL updates)
@@ -87,99 +83,55 @@ class MempBCBDecoder:
             used += len(block)
         return "\n".join(lines).strip() + "\n"
 
-    def _retrieve_memory(self, query: str) -> Tuple[str, List[str], Dict[str, Any]]:
+    def _get_retrieve_threshold(self) -> float:
+        """Align with other benchmarks: use mem_service.rl_config.sim_threshold (fallback tau)."""
+        try:
+            rl_cfg = getattr(self._mem, "rl_config", None)
+            if rl_cfg is None:
+                return 0.0
+            return float(getattr(rl_cfg, "sim_threshold", getattr(rl_cfg, "tau", 0.0)))
+        except Exception:
+            return 0.0
+
+    def _retrieve_memory(self, query: str) -> Tuple[str, List[str], Dict[str, Any], Any]:
         if not self._mem:
-            return "", [], {}
+            return "", [], {}, None
 
-        if self._rl:
-            # NOTE: MemoryService.retrieve_value_aware() can return two shapes:
-            # - value-driven enabled: {"actions": [...], "selected": [...], "candidates": [...], "simmax": ...}
-            # - value-driven disabled: {"action": "id", "selected": {...}, "candidates": [...], "simmax": ...}
-            vd = self._mem.retrieve_value_aware(
-                query, k=self._k, threshold=self._threshold
-            )
-            candidates = list(vd.get("candidates") or [])
+        # Align with current service ecosystem: retrieve_query drives selection.
+        thr = self._get_retrieve_threshold()
+        ret = self._mem.retrieve_query(query, k=self._k, threshold=thr)
+        if isinstance(ret, tuple):
+            ret_result, topk_queries = ret
+        else:
+            ret_result, topk_queries = ret, None
 
-            # Prefer the service's selected set (this is where ε-greedy / value-driven logic lives).
-            raw_selected = vd.get("selected")
-            if isinstance(raw_selected, dict):
-                selected = [raw_selected]
-            elif isinstance(raw_selected, list):
-                selected = list(raw_selected)
-            else:
-                selected = []
-
-            raw_actions = vd.get("actions")
-            if raw_actions is None:
-                one = vd.get("action")
-                raw_actions = [one] if one else []
-            actions = [str(a) for a in (raw_actions or []) if a]
-
-            if not selected and actions:
-                # Map actions -> candidate dicts (best-effort).
-                by_id = {
-                    str(c.get("memory_id") or c.get("id")): c
-                    for c in candidates
-                    if (c.get("memory_id") or c.get("id"))
-                }
-                selected = [by_id[a] for a in actions if a in by_id]
-
-            if not selected:
-                # Fallback: similarity-only top-k (should be rare, but keeps robustness).
-                try:
-                    candidates.sort(
-                        key=lambda x: float(x.get("similarity", 0.0) or 0.0),
-                        reverse=True,
-                    )
-                except Exception:
-                    pass
-                selected = [
-                    c
-                    for c in candidates
-                    if float(c.get("similarity", 0.0) or 0.0) >= self._threshold
-                ][: self._k]
-
-            selected_ids = [
-                str(c.get("memory_id") or c.get("id"))
-                for c in selected
-                if (c.get("memory_id") or c.get("id"))
-            ]
-
-            simmax = float(vd.get("simmax", 0.0) or 0.0)
-            if simmax <= 0.0:
-                try:
-                    simmax = max(
-                        (float(c.get("similarity", 0.0) or 0.0) for c in candidates),
-                        default=0.0,
-                    )
-                except Exception:
-                    simmax = 0.0
-            return (
-                self._format_memory_context(selected),
-                selected_ids,
-                {
-                    "mode": "rl",
-                    "k": self._k,
-                    "threshold": self._threshold,
-                    "simmax": simmax,
-                    "retrieved_count": len(candidates),
-                    "selected_count": len(selected_ids),
-                    "actions": actions,
-                },
-            )
-
-        # RL-off: similarity-only retrieval
-        candidates = self._mem.retrieve(query, k=self._k, threshold=self._threshold)
-        selected_ids = [str(c.get("memory_id") or c.get("id")) for c in candidates if (c.get("memory_id") or c.get("id"))]
+        selected = (ret_result or {}).get("selected", []) if ret_result else []
+        if not isinstance(selected, list):
+            selected = []
+        selected_ids = [
+            str(c.get("memory_id") or c.get("id"))
+            for c in selected
+            if isinstance(c, dict) and (c.get("memory_id") or c.get("id"))
+        ]
         simmax = 0.0
         try:
-            simmax = max((float(c.get("similarity", 0.0) or 0.0) for c in candidates), default=0.0)
+            simmax = max(
+                (float(c.get("similarity", 0.0) or 0.0) for c in selected), default=0.0
+            )
         except Exception:
-            pass
+            simmax = 0.0
+
         return (
-            self._format_memory_context(candidates),
+            self._format_memory_context(selected),
             selected_ids,
-            {"mode": "similarity", "k": self._k, "threshold": self._threshold, "simmax": simmax, "retrieved_count": len(candidates)},
+            {
+                "mode": "retrieve_query",
+                "k": self._k,
+                "threshold": thr,
+                "simmax": simmax,
+                "selected_count": len(selected_ids),
+            },
+            topk_queries,
         )
 
     def _generate_single(self, prompt: str, mem_context: str) -> str:
@@ -210,12 +162,13 @@ class MempBCBDecoder:
         self._last_retrievals = []
 
         for prompt in prompts:
-            mem_context, selected_ids, trace = self._retrieve_memory(prompt)
+            mem_context, selected_ids, trace, topk_queries = self._retrieve_memory(prompt)
             code = self._generate_single(prompt, mem_context)
             info = {
                 "prompt": prompt,
                 "selected_ids": selected_ids,
                 "trace": trace,
+                "retrieved_topk_queries": topk_queries,
                 "num_retrieved": len(selected_ids),
                 "memory_context": mem_context,
             }

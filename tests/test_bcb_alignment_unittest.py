@@ -98,8 +98,6 @@ class TestBCBAlignment(unittest.TestCase):
                 model_name="dummy",
                 num_epochs=1,
                 retrieve_k=3,
-                retrieve_threshold=0.99,  # legacy arg, should not affect threshold used
-                rl_enabled=True,
                 bcb_repo=str(Path(__file__).resolve().parents[1] / "3rdparty" / "bigcodebench-main"),
             )
             r._problems = {

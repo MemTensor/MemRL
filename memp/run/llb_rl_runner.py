@@ -24,6 +24,13 @@ from memp.service.value_driven import RLConfig
 from memp.providers.llm import OpenAILLM
 from memp.providers.embedding import OpenAIEmbedder
 
+from memp.lifelongbench_eval.prompts import (
+    DEFAULT_SYSTEM_PROMPT as LLB_DEFAULT_SYSTEM_PROMPT,
+    build_llb_prompt_with_memory,
+    build_llb_system_prompt,
+)
+from memp.lifelongbench_eval.memory_context import format_llb_memory_context
+
 # --- Setup LLB Path ---
 # 动态查找项目根目录和 LLB 路径
 _current_file = Path(__file__).resolve()
@@ -77,17 +84,7 @@ RETRY_DELAY = 2
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_PROMPT = """
-You are an execution-focused AI agent solving database and operating-system tasks.
-
-You may receive a [Retrieved Memory Context] block with past experiences from similar problems.
-These are **references for learning**, not guaranteed solutions:
-- [MEMORY TYPE] SUCCESS_PROCEDURE: A successful approach from a similar task—learn the pattern.
-- [MEMORY TYPE] FAILURE_REFLECTION: A failed attempt with lessons—avoid similar mistakes.
-
-Use the memories as inspiration, but always analyze your current task independently and
-adapt your approach based on its specific requirements.
-"""
+DEFAULT_SYSTEM_PROMPT = LLB_DEFAULT_SYSTEM_PROMPT
 
 
 class LLBRunner(BaseRunner):
@@ -147,7 +144,11 @@ class LLBRunner(BaseRunner):
         self.bon = bon
         self.algorithm = algorithm
         self.val_before_train = val_before_train
-        self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT.strip()
+        self._base_system_prompt = (system_prompt or DEFAULT_SYSTEM_PROMPT).strip()
+        self.system_prompt = build_llb_system_prompt(
+            task=self.task,
+            base_prompt=self._base_system_prompt,
+        )
         self.os_timeout = os_timeout
         self.sparql_url = sparql_url
         self.ontology_dir = ontology_dir
@@ -323,10 +324,16 @@ class LLBRunner(BaseRunner):
         Returns:
             LanguageModelAgent instance configured with system prompt
         """
-        # Combine system prompt with memory context if provided
-        full_prompt = self.system_prompt
+        # Align prompt assembly ordering with memory_rl/dev/feat-mdp-llb:
+        # system prompt -> (optional) memory context -> strict output constraints at the very end.
         if memory_context:
-            full_prompt = f"{memory_context}\n\n{self.system_prompt}"
+            full_prompt = build_llb_prompt_with_memory(
+                task=self.task,
+                base_prompt=self._base_system_prompt,
+                memory_context=memory_context,
+            )
+        else:
+            full_prompt = self.system_prompt
 
         # Create and return agent
         return LanguageModelAgent(
@@ -470,7 +477,15 @@ class LLBRunner(BaseRunner):
                         task_description=task_description,
                         k=self.retrieve_k,
                         threshold=(
-                            self.rl_config.tau if self.rl_config else 0.0
+                            (
+                                getattr(
+                                    self.rl_config,
+                                    "sim_threshold",
+                                    getattr(self.rl_config, "tau", 0.0),
+                                )
+                                if self.rl_config
+                                else 0.0
+                            )
                         ),
                     )
                     # retrieve_query returns tuple: (dict with 'selected' key, topk_queries)
@@ -559,57 +574,9 @@ class LLBRunner(BaseRunner):
     def _format_memory_context(
         self, processed_mems: Dict[str, List[dict]], budget_tokens: Optional[int] = None
     ) -> str:
-        """Format categorized memories into context string.
-
-        Args:
-            processed_mems: Dictionary with 'successed' and/or 'failed' keys containing memory lists
-            budget_tokens: Optional token budget limit
-
-        Returns:
-            Formatted memory context string with separate sections for successful and failed memories
-        """
-        lines = ["[Retrieved Memory Context]"]
-        used = 0
-
-        # Format successful memories first
-        success_mems = processed_mems.get("successed", [])
-        if success_mems:
-            lines.append("\n=== SUCCESSFUL EXPERIENCES (Learn from these) ===")
-            for i, mem in enumerate(success_mems):
-                metadata = mem.get("metadata")
-                if metadata:
-                    mem_type = getattr(metadata, "type", "SUCCESS_PROCEDURE")
-                else:
-                    mem_type = "SUCCESS_PROCEDURE"
-                content = mem.get("content", "")
-                if not content:
-                    continue
-                snippet = f"[SUCCESS {i+1}] [TYPE: {mem_type}]\n{content}\n"
-                lines.append(snippet)
-                used += len(snippet.split())
-                if budget_tokens and used >= budget_tokens:
-                    return "\n".join(lines)
-
-        # Format failed memories second
-        failed_mems = processed_mems.get("failed", [])
-        if failed_mems:
-            lines.append("\n=== FAILED EXPERIENCES (Avoid these mistakes) ===")
-            for i, mem in enumerate(failed_mems):
-                metadata = mem.get("metadata")
-                if metadata:
-                    mem_type = getattr(metadata, "type", "FAILURE_REFLECTION")
-                else:
-                    mem_type = "FAILURE_REFLECTION"
-                content = mem.get("content", "")
-                if not content:
-                    continue
-                snippet = f"[FAILURE {i+1}] [TYPE: {mem_type}]\n{content}\n"
-                lines.append(snippet)
-                used += len(snippet.split())
-                if budget_tokens and used >= budget_tokens:
-                    break
-
-        return "\n".join(lines)
+        return format_llb_memory_context(
+            processed_mems, task=self.task, budget_tokens=budget_tokens
+        )
 
     def _session_to_trajectory(self, session: Any) -> Optional[str]:
         """

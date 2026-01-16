@@ -4,8 +4,9 @@ BigCodeBench (BCB) multi-epoch runner for MemRL.
 This runner implements the same high-level structure used by other benchmarks:
   - multi-epoch loop
   - per-epoch train then val
-  - train writes memories via MemoryService.update_memory
-  - optional value-driven Q updates via MemoryService.update_values
+  - retrieval via MemoryService.retrieve_query (dict_memory + RL threshold)
+  - train writes memories via MemoryService.add_memories (keeps dict_memory in sync)
+  - value-driven Q updates via MemoryService.update_values
   - per-epoch snapshots via MemoryService.save_checkpoint_snapshot(target_ck_dir, ckpt_id)
 """
 
@@ -19,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from memp.bigcodebench_eval.bcb_adapter import MempBCBDecoder
+from memp.bigcodebench_eval.bcb_adapter import extract_code_from_response
 from memp.bigcodebench_eval.eval_utils import (
     ensure_bigcodebench_on_path,
     run_untrusted_check_with_hard_timeout,
@@ -81,6 +82,58 @@ class BCBRunner:
         self._problems: Dict[str, Dict[str, Any]] = {}
         self._train_ids: List[str] = []
         self._val_ids: List[str] = []
+
+    def _get_retrieve_threshold(self) -> float:
+        """Align with other benchmarks: use rl_config.sim_threshold (fallback to tau)."""
+        try:
+            rl_cfg = getattr(self.mem, "rl_config", None)
+            if rl_cfg is None:
+                return 0.0
+            return float(getattr(rl_cfg, "sim_threshold", getattr(rl_cfg, "tau", 0.0)))
+        except Exception:
+            return 0.0
+
+    def _format_memory_context(
+        self, selected_mems: List[Dict[str, Any]], *, budget_tokens: int = 2000
+    ) -> str:
+        if not selected_mems:
+            return ""
+        budget_chars = max(0, int(budget_tokens) * 4)
+        lines: List[str] = ["[Retrieved Memory Context]"]
+        used = 0
+        for idx, m in enumerate(selected_mems, start=1):
+            mem_id = m.get("memory_id") or m.get("id") or "unknown"
+            content = m.get("content") or ""
+            sim = m.get("similarity", None)
+            header = f"\n### Memory {idx} (id={mem_id}"
+            if sim is not None:
+                try:
+                    header += f", sim={float(sim):.3f}"
+                except Exception:
+                    pass
+            header += ")\n"
+            block = header + str(content).strip() + "\n"
+            if used + len(block) > budget_chars:
+                break
+            lines.append(block)
+            used += len(block)
+        return "\n".join(lines).strip() + "\n"
+
+    def _generate_code(self, prompt: str, *, memory_context: str = "") -> str:
+        messages: List[Dict[str, str]] = []
+        if memory_context:
+            messages.append({"role": "system", "content": memory_context})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            resp = self.llm.generate(
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+        except Exception:
+            logger.warning("LLM generation failed for BCB prompt", exc_info=True)
+            return ""
+        return extract_code_from_response(resp or "")
 
     # -------------------------- I/O helpers --------------------------
 
@@ -153,37 +206,87 @@ class BCBRunner:
         phase_dir = os.path.join(epoch_dir, phase)
         os.makedirs(phase_dir, exist_ok=True)
 
-        decoder = MempBCBDecoder(
-            name=self.model_name,
-            llm_provider=self.llm,
-            mem_service=self.mem,
-            temperature=self.temperature,
-            max_new_tokens=self.max_tokens,
-            retrieve_k=self.retrieve_k,
-            retrieve_threshold=self.retrieve_threshold,
-            rl_enabled=self.rl_enabled,
-        )
-
         samples: List[Dict[str, Any]] = []
         retrieval_logs: List[Dict[str, Any]] = []
 
         pass_count = 0
         total = len(task_ids)
 
+        # Buffered memory updates (mini-batch-like), consistent with other runners.
+        pending_task_descriptions: List[str] = []
+        pending_trajectories: List[str] = []
+        pending_successes: List[bool] = []
+        pending_retrieved_ids: List[List[str]] = []
+        pending_retrieved_queries: List[Optional[List[Tuple[str, float]]]] = []
+        pending_metadatas: List[Dict[str, Any]] = []
+
+        def _flush_memory_updates() -> None:
+            if not update_memory or not pending_task_descriptions:
+                return
+            try:
+                self.mem.update_values(
+                    [float(s) for s in pending_successes], pending_retrieved_ids
+                )
+            except Exception:
+                logger.debug("BCB Q update failed (batch)", exc_info=True)
+            try:
+                self.mem.add_memories(
+                    task_descriptions=pending_task_descriptions,
+                    trajectories=pending_trajectories,
+                    successes=pending_successes,
+                    retrieved_memory_queries=pending_retrieved_queries,
+                    retrieved_memory_ids_list=pending_retrieved_ids,
+                    metadatas=pending_metadatas,
+                )
+            except Exception:
+                logger.warning("BCB add_memories failed (batch)", exc_info=True)
+            finally:
+                pending_task_descriptions.clear()
+                pending_trajectories.clear()
+                pending_successes.clear()
+                pending_retrieved_ids.clear()
+                pending_retrieved_queries.clear()
+                pending_metadatas.clear()
+
         for idx, task_id in enumerate(task_ids, start=1):
             task = self._problems[task_id]
             prompt = get_prompt(task, split=self.sel.split)
-            codes = decoder.codegen([prompt], do_sample=(self.temperature > 0.0), num_samples=1)
-            code = (codes[0][0] if codes and codes[0] else "") or ""
+            selected_ids: List[str] = []
+            retrieved_topk_queries: Optional[List[Tuple[str, float]]] = None
+            mem_context = ""
 
-            retrieval = decoder.last_retrieval or {}
+            if self.mem is not None and self.retrieve_k > 0:
+                try:
+                    thr = self._get_retrieve_threshold()
+                    ret = self.mem.retrieve_query(prompt, k=self.retrieve_k, threshold=thr)
+                    if isinstance(ret, tuple):
+                        ret_result, retrieved_topk_queries = ret
+                    else:
+                        ret_result, retrieved_topk_queries = ret, None
+
+                    selected_mems = (ret_result or {}).get("selected", []) if ret_result else []
+                    if not isinstance(selected_mems, list):
+                        selected_mems = []
+
+                    selected_ids = [
+                        str(m.get("memory_id"))
+                        for m in selected_mems
+                        if isinstance(m, dict) and m.get("memory_id")
+                    ]
+                    mem_context = self._format_memory_context(selected_mems)
+                except Exception:
+                    logger.debug("BCB retrieval failed for %s", task_id, exc_info=True)
+
+            code = self._generate_code(prompt, memory_context=mem_context)
+
             retrieval_logs.append(
                 {
                     "task_id": task_id,
                     "epoch": epoch,
                     "phase": phase,
-                    "selected_ids": retrieval.get("selected_ids") or [],
-                    "trace": retrieval.get("trace") or {},
+                    "selected_ids": selected_ids,
+                    "retrieved_topk_queries": retrieved_topk_queries,
+                    "threshold": self._get_retrieve_threshold(),
                 }
             )
 
@@ -204,7 +307,6 @@ class BCBRunner:
             samples.append(sample)
 
             if update_memory:
-                selected_ids: List[str] = list(retrieval.get("selected_ids") or [])
                 traj = "\n".join(
                     [
                         f"[BCB] epoch={epoch} phase={phase} task_id={task_id}",
@@ -218,33 +320,42 @@ class BCBRunner:
                         json.dumps({"status": eval_res.get("status"), "error": eval_res.get("error")}, ensure_ascii=False),
                     ]
                 )
+                # Align with other benchmarks: use add_memories() so dict_memory stays consistent.
+                try:
+                    rl_cfg = getattr(self.mem, "rl_config", None)
+                    q_init_pos = float(getattr(rl_cfg, "q_init_pos", 0.0)) if rl_cfg else 0.0
+                    q_init_neg = float(getattr(rl_cfg, "q_init_neg", 0.0)) if rl_cfg else 0.0
+                except Exception:
+                    q_init_pos, q_init_neg = 0.0, 0.0
+
                 meta = {
                     "source_benchmark": "bigcodebench",
+                    "success": bool(ok),
+                    "q_value": (q_init_pos if ok else q_init_neg),
+                    "q_visits": 0,
+                    "q_updated_at": datetime.now().isoformat(),
+                    "last_used_at": datetime.now().isoformat(),
+                    "reward_ma": 0.0,
                     "task_id": task_id,
                     "bcb_epoch": epoch,
                     "phase": phase,
                     "model": self.model_name,
                 }
-                try:
-                    self.mem.update_memory(
-                        task_description=prompt,
-                        trajectory=traj,
-                        success=bool(ok),
-                        retrieved_memory_ids=selected_ids,
-                        metadata=meta,
-                    )
-                except Exception:
-                    logger.warning("Memory update failed for %s", task_id, exc_info=True)
 
-                # Optional value update for retrieved ids (when enabled in MemoryService).
-                try:
-                    if selected_ids:
-                        self.mem.update_values([1.0 if ok else 0.0], [selected_ids])
-                except Exception:
-                    logger.debug("Q update failed for %s", task_id, exc_info=True)
+                pending_task_descriptions.append(prompt)
+                pending_trajectories.append(traj)
+                pending_successes.append(bool(ok))
+                pending_retrieved_ids.append(list(selected_ids))
+                pending_retrieved_queries.append(retrieved_topk_queries)
+                pending_metadatas.append(meta)
+
+                if len(pending_task_descriptions) >= 25:
+                    _flush_memory_updates()
 
             if idx % 25 == 0 or idx == total:
                 logger.info("[bcb] epoch %d %s %d/%d pass=%d", epoch, phase, idx, total, pass_count)
+
+        _flush_memory_updates()
 
         samples_path = os.path.join(phase_dir, "samples.jsonl")
         write_samples(samples, samples_path)
@@ -297,7 +408,10 @@ class BCBRunner:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "retrieve_k": self.retrieve_k,
-            "retrieve_threshold": self.retrieve_threshold,
+            # Aligned threshold knob across benchmarks:
+            "retrieve_threshold": self._get_retrieve_threshold(),
+            # Kept for traceability; not used when running in aligned mode.
+            "legacy_retrieve_threshold_arg": self.retrieve_threshold,
             "rl_enabled": self.rl_enabled,
             "bcb_repo": self.bcb_repo,
             "created_at": datetime.now().isoformat(),
@@ -346,4 +460,3 @@ class BCBRunner:
         }
         self._save_json(os.path.join(self.output_dir, "summary.json"), final)
         return final
-

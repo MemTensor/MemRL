@@ -753,7 +753,8 @@ class AlfworldRunner(BaseRunner):
                     self.memory_service.retrieve_query,
                     desc,
                     k=self.retrieve_k,
-                    threshold=getattr(self.rl_config, "tau", 0.0)
+                    # Align retrieval threshold knob across benchmarks: rl_config.sim_threshold (fallback tau).
+                    threshold=getattr(self.rl_config, "sim_threshold", getattr(self.rl_config, "tau", 0.0))
                 )
                 for desc in current_task_descs
             ]

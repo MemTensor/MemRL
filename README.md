@@ -11,3 +11,4 @@ python run/run_bcb.py --config configs/rl_bcb_config.yaml --subset hard --split 
 
 Dataset is expected under `data/bigcodebench/` (JSONL). See the error message from the runner for a download command.
 Train/val split defaults to the legacy split files under `configs/bigcodebench/splits/` (override via `--split_file`).
+Retrieval threshold is aligned with other benchmarks and uses `rl_config.sim_threshold`.

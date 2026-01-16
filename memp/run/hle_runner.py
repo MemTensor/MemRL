@@ -638,7 +638,9 @@ class HLERunner(BaseRunner):
         memory_image_ids: Set[str] = set()
         if self.memory_service and self.retrieve_k > 0:
             try:
-                tau = float(getattr(getattr(self.memory_service, 'rl_config', None), 'tau', 0.0))
+                # Align retrieval threshold knob across benchmarks: rl_config.sim_threshold (fallback tau).
+                rl_cfg = getattr(self.memory_service, "rl_config", None)
+                tau = float(getattr(rl_cfg, "sim_threshold", getattr(rl_cfg, "tau", 0.0)))
             except Exception:
                 tau = 0.0
             try:

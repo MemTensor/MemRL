@@ -93,7 +93,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--max_tokens", type=int, default=None)
     p.add_argument("--retrieve_k", type=int, default=None)
-    p.add_argument("--retrieve_threshold", type=float, default=None)
+    p.add_argument(
+        "--retrieve_threshold",
+        type=float,
+        default=None,
+        help=(
+            "Legacy override (kept for compatibility). "
+            "BCB retrieval is aligned with other benchmarks and uses rl_config.sim_threshold."
+        ),
+    )
     p.add_argument("--eval_timeout", type=float, default=60.0)
     p.add_argument("--untrusted_hard_timeout", type=float, default=120.0)
     return p.parse_args()
@@ -233,8 +241,11 @@ def main() -> None:
             args.max_tokens if args.max_tokens is not None else (cfg.llm.max_tokens or 1280)
         ),
         retrieve_k=(args.retrieve_k if args.retrieve_k is not None else cfg.memory.k_retrieve),
+        # Legacy parameter (not used when aligned with other benchmarks).
         retrieve_threshold=(
-            args.retrieve_threshold if args.retrieve_threshold is not None else 0.2
+            args.retrieve_threshold
+            if args.retrieve_threshold is not None
+            else float(getattr(cfg.rl_config, "sim_threshold", 0.0))
         ),
         rl_enabled=cfg.experiment.enable_value_driven,
         bcb_repo=args.bcb_repo,

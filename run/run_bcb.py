@@ -22,6 +22,11 @@ from memp.service.strategies import (
 )
 from memp.run.bcb_runner import BCBRunner, BCBSelection
 
+DEFAULT_SPLIT_FILES = {
+    "hard": project_root / "configs" / "bigcodebench" / "splits" / "hard_seed42.json",
+    "full": project_root / "configs" / "bigcodebench" / "splits" / "full_seed123.json",
+}
+
 
 def setup_logging(project_root: Path, name: str) -> None:
     log_dir = project_root / "logs" / name
@@ -64,7 +69,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--train_ratio", type=float, default=0.7)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--split_file", type=str, default=None)
+    p.add_argument(
+        "--split_file",
+        type=str,
+        default=None,
+        help=(
+            "Path to a JSON split file containing train_ids/val_ids. "
+            "If omitted, uses legacy split files under configs/bigcodebench/splits/."
+        ),
+    )
     p.add_argument("--data_path", type=str, default=None)
     p.add_argument(
         "--bcb_repo",
@@ -92,6 +105,11 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     cfg = MempConfig.from_yaml(args.config)
+
+    if args.split_file is None:
+        default_split = DEFAULT_SPLIT_FILES.get(args.subset)
+        if default_split is not None and default_split.exists():
+            args.split_file = str(default_split)
 
     out_root = Path(args.output_dir or cfg.experiment.output_dir or "./results").resolve()
     out_dir = out_root / "bigcodebench_eval" / f"{args.split}_{args.subset}" / "memory"
@@ -230,4 +248,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,0 +1,54 @@
+# Minimal config for running BigCodeBench (BCB) with MemRL.
+#
+# Notes:
+# - This repo's runners read `MempConfig` from YAML, and also accept CLI overrides.
+# - Replace the placeholder `api_key` with your own key before running.
+
+llm:
+  provider: openai
+  api_key: "sk-REPLACE_ME"
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+  temperature: 0.0
+  max_tokens: 1280
+
+embedding:
+  provider: openai
+  api_key: "sk-REPLACE_ME"
+  base_url: "https://api.openai.com/v1"
+  model: "text-embedding-3-large"
+  max_text_len: 8196
+
+memory:
+  build_strategy: "proceduralization"
+  retrieve_strategy: "query"
+  update_strategy: "adjustment"
+  k_retrieve: 5
+  max_keywords: 8
+  add_similarity_threshold: 0.9
+
+experiment:
+  experiment_name: "bcb_memrl"
+  enable_value_driven: true
+  batch_size: 1
+  num_sections: 1
+  output_dir: "./results"
+
+rl_config:
+  epsilon: 0.1
+  tau: 0.35
+  alpha: 0.3
+  gamma: 0.0
+  q_init_pos: 0.0
+  q_init_neg: 0.0
+  success_reward: 1.0
+  failure_reward: -1.0
+  sim_threshold: 0.5
+  topk: 5
+  novelty_threshold: 0.85
+  recency_boost: 0.0
+  reward_merge_gain: 0.1
+  q_min_threshold: -0.8
+  weight_sim: 0.5
+  weight_q: 0.5
+

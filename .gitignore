@@ -1,7 +1,6 @@
 logs/
 results/
 data/
-/configs/
 __pycache__/
 *.pyc
 *.pyo
@@ -10,6 +9,5 @@ __pycache__/
 .vscode/
 .mem0/
 .selfrag/
+.worktrees/
 code_review/
-docs/
-tests/

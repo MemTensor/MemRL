@@ -32,6 +32,7 @@ class RLConfig:
     q_init_neg: float = 0          # negative q init
     success_reward: float = 1.0
     failure_reward: float = -1.0
+    sim_threshold: float = 0.5     # retrieval filtering threshold (used by some runners)
     topk: int = 5                  # candidate set size for value-aware selection
     novelty_threshold: float = 0.85  # similarity to treat as non-novel (merge)
     recency_boost: float = 0.0     # optional recency weight
@@ -255,4 +256,3 @@ class MemoryCurator:
             return self.q_updater.update(memory_id, gain)
         except Exception:
             return None
-

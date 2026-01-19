@@ -157,6 +157,9 @@ class RLConfig(BaseModel):
     q_init_neg: float = Field(default=0.0, description="Initialization for negative Q-values")
     success_reward: float = Field(default=1.0, description="Reward for successful outcome")
     failure_reward: float = Field(default=-1.0, description="Reward for failure outcome")
+    # Retrieval filtering threshold used by runners when calling MemoryService.retrieve_query(...).
+    # (Kept separate from `tau` to avoid conflating unknown-detection vs retrieval filtering.)
+    sim_threshold: float = Field(default=0.5, description="Similarity threshold for retrieval filtering")
     topk: int = Field(default=5, description="Candidate set size for value-aware selection")
     novelty_threshold: float = Field(default=0.85, description="Similarity threshold to treat as non-novel (merge)")
     recency_boost: float = Field(default=0.0, description="Optional recency weight for prioritization")
@@ -299,4 +302,3 @@ class MempConfig(BaseModel):
         """String representation of the configuration."""
         strategy_str = f"{self.memory.build_strategy}+{self.memory.retrieve_strategy}+{self.memory.update_strategy}"
         return f"MempConfig(strategy={strategy_str}, llm={self.llm.model}, embedding={self.embedding.model})"
-

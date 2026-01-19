@@ -202,6 +202,7 @@ def main() -> None:
         env_config=alfworld_config_path,
         memory_service=memory_adapter,  # mem0 adapter
         exp_name=cfg.experiment.experiment_name,
+        ck_dir=log_dir,
         random_seed=cfg.experiment.random_seed,
         num_section=cfg.experiment.num_sections,
         batch_size=cfg.experiment.batch_size,
@@ -212,7 +213,7 @@ def main() -> None:
         mode=cfg.experiment.mode,
         valid_interval=cfg.experiment.valid_interval,
         test_interval=cfg.experiment.test_interval,
-        train_set_ratio=getattr(cfg.experiment, "train_set_ratio", 1.0),
+        dataset_ratio=getattr(cfg.experiment, "dataset_ratio", 1.0),
         ckpt_resume_enabled=getattr(cfg.experiment, "ckpt_resume_enabled", False),
         ckpt_resume_path=getattr(cfg.experiment, "ckpt_resume_path", None),
         ckpt_resume_epoch=getattr(cfg.experiment, "ckpt_resume_epoch", None),

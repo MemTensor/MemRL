@@ -552,7 +552,7 @@ class AlfworldRunner(BaseRunner):
         summary = []
         result_path = self.local_cache_dir / "baseline_passk_results.jsonl"
         summary_path = self.local_cache_dir / "baseline_passk_summary.json"
-        train_sections_data = self.envs_spilt(self.train_game_files, 'train', repeat_sections=1)
+        train_sections_data = self.envs_spilt(self.train_game_files, 'train')
 
         for round_idx in range(1, self.baseline_k + 1):
             logger.info("Starting pass@k round %d/%d", round_idx, self.baseline_k)
@@ -591,7 +591,7 @@ class AlfworldRunner(BaseRunner):
         result_path = self.local_cache_dir / "baseline_reflection_results.jsonl"
         summary_path = self.local_cache_dir / "baseline_reflection_summary.json"
         state_path = self.local_cache_dir / "baseline_reflection_state.json"
-        train_sections_data = self.envs_spilt(self.train_game_files, 'train', repeat_sections=1)
+        train_sections_data = self.envs_spilt(self.train_game_files, 'train')
         reflection_notes: Dict[str, str] = {}
 
         start_round = 1

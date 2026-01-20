@@ -197,6 +197,8 @@ def main():
             ckpt_resume_enabled=getattr(cfg.experiment, "ckpt_resume_enabled", False),
             ckpt_resume_path=getattr(cfg.experiment, "ckpt_resume_path", None),
             ckpt_resume_epoch=getattr(cfg.experiment, "ckpt_resume_epoch", None),
+            baseline_mode=getattr(cfg.experiment, "baseline_mode", False),
+            baseline_k=getattr(cfg.experiment, "baseline_k", 0),
         )
         runner.run()
     except Exception as e:

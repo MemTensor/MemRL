@@ -59,6 +59,8 @@ class HLERunner(BaseRunner):
         ckpt_resume_enabled: bool = False,
         ckpt_resume_path: Optional[str] = None,
         ckpt_resume_epoch: Optional[int] = None,
+        baseline_mode: Optional[str] = None,
+        baseline_k: int = 10,
     ) -> None:
         self.name = name
         self.llm = llm
@@ -79,6 +81,8 @@ class HLERunner(BaseRunner):
         self.ckpt_resume_enabled = ckpt_resume_enabled
         self.ckpt_resume_path = ckpt_resume_path
         self.ckpt_resume_epoch = ckpt_resume_epoch
+        self.baseline_mode = (baseline_mode or "").strip().lower() or None
+        self.baseline_k = max(1, int(baseline_k))
 
         self.run_id = run_id or time.strftime('%Y%m%d-%H%M%S')
         ts = self.run_id
@@ -353,6 +357,43 @@ class HLERunner(BaseRunner):
             self._prune_valid_memories(valid_questions)
             self._eval_split(valid_df, tag=f"valid_ckpt_{idx}", step=idx)
 
+    def _baseline_task_key(self, data: Any) -> str:
+        """Canonical key for pass@k/reflection loops; prefer id, fallback to question text."""
+        candidate_id = None
+        question = None
+        try:
+            candidate_id = data.get("id")
+        except Exception:
+            candidate_id = None
+        try:
+            question = data.get("question")
+        except Exception:
+            question = None
+        if candidate_id is not None:
+            try:
+                if not pd.isna(candidate_id):
+                    cid = str(candidate_id).strip()
+                    if cid and cid.lower() != "nan":
+                        return cid
+            except Exception:
+                cid = str(candidate_id).strip()
+                if cid:
+                    return cid
+        return str(question or "")
+
+    def _format_reflection_note(self, question: str, trajectory: str, success: bool) -> str:
+        status = "CORRECT" if success else "INCORRECT"
+        traj_text = (trajectory or "").strip()
+        note_parts = [
+            "You attempted this question before.",
+            f"Result: {status}",
+            f"Question: {question}",
+            "Previous attempt (question and answer transcript):",
+            traj_text,
+            "Reflect on mistakes or gaps, then solve the problem again with a better solution.",
+        ]
+        return "\n".join([p for p in note_parts if p])
+
     # ---------- Image helpers ----------
     def _register_image(self, image: Any) -> Optional[Tuple[str, str]]:
         """Convert raw image to data URL, cache in store, and return (image_id, data_url)."""
@@ -486,6 +527,7 @@ class HLERunner(BaseRunner):
         answer_type: Optional[Any] = None,
         question_image_ids: Optional[List[str]] = None,
         images_info: Optional[List[Tuple[str, str, str]]] = None,
+        reflection_note: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         answer_type_norm = ""
         if answer_type is not None:
@@ -511,6 +553,8 @@ class HLERunner(BaseRunner):
                 })
 
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        if reflection_note:
+            msgs.append({"role": "system", "content": reflection_note})
         if memory_ctx:
             msgs.append({"role": "system", "content": memory_ctx})
         msgs.append({"role": "user", "content": content})
@@ -617,7 +661,7 @@ class HLERunner(BaseRunner):
             logger.debug("Failed to log judge LLM call", exc_info=True)
         return result
 
-    def _evaluate_row(self, row: pd.Series) -> Dict[str, Any]:
+    def _evaluate_row(self, row: pd.Series, reflection_note: Optional[str] = None) -> Dict[str, Any]:
         q = str(row['question'])
         gold = str(row['answer'])
         # Collect question images and register them
@@ -663,7 +707,14 @@ class HLERunner(BaseRunner):
         images_info = question_images_info + memory_images_info
 
         answer_type = row.get('answer_type', None)
-        messages = self._build_messages(q, memory_ctx=memory_ctx, answer_type=answer_type, question_image_ids=question_image_ids, images_info=images_info)
+        messages = self._build_messages(
+            q,
+            memory_ctx=memory_ctx,
+            answer_type=answer_type,
+            question_image_ids=question_image_ids,
+            images_info=images_info,
+            reflection_note=reflection_note,
+        )
         call_meta = {
             "question_id": row.get('id', None),
             "answer_type": answer_type,
@@ -839,8 +890,186 @@ class HLERunner(BaseRunner):
             "per_item": per_item
         }
 
+    def _baseline_eval_split(
+        self,
+        df: pd.DataFrame,
+        desc: str,
+        *,
+        reflection_notes: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Evaluate a dataframe in batches, optionally injecting reflection notes per item."""
+        if df is None or len(df) == 0:
+            return []
+        idxs = list(range(len(df)))
+        batches = [idxs[i:i + self.batch_size] for i in range(0, len(idxs), self.batch_size)]
+        results: List[Dict[str, Any]] = []
+        for b in tqdm(batches, desc=desc):
+            batch_results: List[Optional[Dict[str, Any]]] = [None] * len(b)
+            with ThreadPoolExecutor(max_workers=min(len(b), self.batch_size)) as ex:
+                fut2pos = {}
+                for pos, i in enumerate(b):
+                    row = df.iloc[i]
+                    note = None
+                    if reflection_notes:
+                        key = self._baseline_task_key(row)
+                        note = reflection_notes.get(key)
+                    fut2pos[ex.submit(self._evaluate_row, row, note)] = pos
+                for fut in as_completed(fut2pos):
+                    pos = fut2pos[fut]
+                    try:
+                        batch_results[pos] = fut.result()
+                    except Exception as e:
+                        logger.warning("[baseline %s] item #%d failed: %s", desc, pos, e)
+                        batch_results[pos] = None
+            results.extend([r for r in batch_results if r is not None])
+        return results
+
+    def _run_passk_baseline(self, train_df: pd.DataFrame) -> None:
+        total_tasks = len(train_df)
+        if total_tasks == 0:
+            logger.warning("No train data for pass@k baseline; aborting.")
+            return
+        solved: Set[str] = set()
+        summary = []
+        result_path = self.log_dir / "baseline_passk_results.jsonl"
+        summary_path = self.log_dir / "baseline_passk_summary.json"
+
+        for round_idx in range(1, self.baseline_k + 1):
+            logger.info("Starting pass@k round %d/%d", round_idx, self.baseline_k)
+            pending_idx = [
+                i for i in range(total_tasks)
+                if self._baseline_task_key(train_df.iloc[i]) not in solved
+            ]
+            if pending_idx:
+                pending_df = train_df.iloc[pending_idx].reset_index(drop=True)
+                trajectories = self._baseline_eval_split(pending_df, desc=f"pass@k round {round_idx}")
+                for traj in trajectories:
+                    key = self._baseline_task_key(traj)
+                    if traj.get("correct") and key:
+                        solved.add(str(key))
+                    payload = {
+                        "round": round_idx,
+                        "baseline": "passk",
+                        **traj,
+                    }
+                    with open(result_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+            else:
+                logger.info("All tasks already solved before round %d; skipping inference.", round_idx)
+            cum_acc = (len(solved) / total_tasks) if total_tasks > 0 else 0.0
+            summary.append({"round": round_idx, "cum_acc": cum_acc, "solved": len(solved), "total": total_tasks})
+            try:
+                self.writer.add_scalar("Baseline/PassK_Cumulative_Acc", cum_acc, round_idx)
+            except Exception:
+                pass
+
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    def _run_reflection_baseline(self, train_df: pd.DataFrame) -> None:
+        total_tasks = len(train_df)
+        if total_tasks == 0:
+            logger.warning("No train data for reflection baseline; aborting.")
+            return
+        solved: Set[str] = set()
+        summary = []
+        reflection_notes: Dict[str, str] = {}
+        result_path = self.log_dir / "baseline_reflection_results.jsonl"
+        summary_path = self.log_dir / "baseline_reflection_summary.json"
+        state_path = self.log_dir / "baseline_reflection_state.json"
+
+        start_round = 1
+        if state_path.exists():
+            try:
+                state = json.load(open(state_path, "r", encoding="utf-8"))
+                solved = {str(x) for x in state.get("solved", [])}
+                reflection_notes = {str(k): v for k, v in state.get("reflection_notes", {}).items()}
+                last_completed = int(state.get("last_completed_round", 0))
+                start_round = max(1, last_completed + 1)
+                logger.info("Resuming reflection baseline from round %d", start_round)
+            except Exception as e:
+                logger.warning("Failed to load reflection baseline state from %s: %s", state_path, e)
+
+        if start_round > self.baseline_k:
+            logger.info("Reflection baseline already completed (last round %d).", start_round - 1)
+            return
+
+        for round_idx in range(start_round, self.baseline_k + 1):
+            logger.info("Starting reflection round %d/%d", round_idx, self.baseline_k)
+            pending_idx = [
+                i for i in range(total_tasks)
+                if self._baseline_task_key(train_df.iloc[i]) not in solved
+            ]
+            if pending_idx:
+                pending_df = train_df.iloc[pending_idx].reset_index(drop=True)
+                trajectories = self._baseline_eval_split(
+                    pending_df,
+                    desc=f"reflection round {round_idx}",
+                    reflection_notes=reflection_notes,
+                )
+                for traj in trajectories:
+                    key = self._baseline_task_key(traj)
+                    if key:
+                        reflection_notes[key] = self._format_reflection_note(
+                            traj.get("question", ""),
+                            traj.get("trajectory", ""),
+                            bool(traj.get("correct")),
+                        )
+                        if traj.get("correct"):
+                            solved.add(str(key))
+                    payload = {
+                        "round": round_idx,
+                        "baseline": "reflection",
+                        **traj,
+                    }
+                    with open(result_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+            else:
+                logger.info("All tasks already solved before round %d; skipping inference.", round_idx)
+            cum_acc = (len(solved) / total_tasks) if total_tasks > 0 else 0.0
+            summary.append({"round": round_idx, "cum_acc": cum_acc, "solved": len(solved), "total": total_tasks})
+            try:
+                self.writer.add_scalar("Baseline/Reflection_Cumulative_Acc", cum_acc, round_idx)
+            except Exception:
+                pass
+            try:
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "last_completed_round": round_idx,
+                            "solved": sorted(solved),
+                            "reflection_notes": reflection_notes,
+                            "total": total_tasks,
+                            "updated_at": time.strftime('%Y-%m-%dT%H:%M:%S'),
+                        },
+                        f,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+            except Exception as e:
+                logger.warning("Failed to save reflection baseline state to %s: %s", state_path, e)
+
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+
     def run(self):
         train_df, valid_df = self._load()
+
+        if self.baseline_mode in {"passk", "reflection"}:
+            if self.baseline_mode == "passk":
+                self._run_passk_baseline(train_df)
+            else:
+                self._run_reflection_baseline(train_df)
+            try:
+                self.writer.close()
+            except Exception:
+                pass
+            try:
+                with self._image_lock:
+                    self._persist_image_cache_unlocked()
+            except Exception:
+                logger.debug("Failed to persist image cache on shutdown", exc_info=True)
+            return
 
         # If enabled, evaluate by loading historical checkpoints sequentially.
         if self.ckpt_eval_enabled:

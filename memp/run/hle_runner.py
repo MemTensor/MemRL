@@ -362,11 +362,11 @@ class HLERunner(BaseRunner):
         candidate_id = None
         question = None
         try:
-            candidate_id = data.get("id")
+            candidate_id = data["id"]
         except Exception:
             candidate_id = None
         try:
-            question = data.get("question")
+            question = data["question"]
         except Exception:
             question = None
         if candidate_id is not None:
@@ -381,18 +381,29 @@ class HLERunner(BaseRunner):
                     return cid
         return str(question or "")
 
+    def _extract_solution_only(self, trajectory: str) -> str:
+        if not trajectory:
+            return ""
+        if "SOLUTION" in trajectory:
+            return trajectory.split("SOLUTION", 1)[1].strip()
+        return trajectory.strip()
+
+
     def _format_reflection_note(self, question: str, trajectory: str, success: bool) -> str:
         status = "CORRECT" if success else "INCORRECT"
-        traj_text = (trajectory or "").strip()
+
+        solution_only = self._extract_solution_only(trajectory)
+
         note_parts = [
             "You attempted this question before.",
             f"Result: {status}",
             f"Question: {question}",
-            "Previous attempt (question and answer transcript):",
-            traj_text,
+            "Previous attempt (solution only):",
+            solution_only,
             "Reflect on mistakes or gaps, then solve the problem again with a better solution.",
         ]
         return "\n".join([p for p in note_parts if p])
+
 
     # ---------- Image helpers ----------
     def _register_image(self, image: Any) -> Optional[Tuple[str, str]]:
@@ -721,12 +732,18 @@ class HLERunner(BaseRunner):
         }
         gen_error = None
         try:
-            kwargs = dict(
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-
+            if self.llm.model != "gemini-3-pro-preview":
+                kwargs = dict(
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    )
+            else:
+                kwargs = dict(
+                    messages=messages,
+                    temperature=self.temperature
+                    )
+                
             if self.llm.model == "gpt-5.2":
                 kwargs["reasoning_effort"] = "high"
 
@@ -1027,6 +1044,7 @@ class HLERunner(BaseRunner):
             else:
                 logger.info("All tasks already solved before round %d; skipping inference.", round_idx)
             cum_acc = (len(solved) / total_tasks) if total_tasks > 0 else 0.0
+            logger.info("Reflection round %d completed. Cumulative Acc: %.2f%% (%d/%d)", round_idx, cum_acc * 100, len(solved), total_tasks)
             summary.append({"round": round_idx, "cum_acc": cum_acc, "solved": len(solved), "total": total_tasks})
             try:
                 self.writer.add_scalar("Baseline/Reflection_Cumulative_Acc", cum_acc, round_idx)

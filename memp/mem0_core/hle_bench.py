@@ -95,7 +95,9 @@ class HLEMem0Bench:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.llm_log_path = self.log_dir / "llm_calls.jsonl"
         self.mem0_log_path = self.log_dir / "mem0_calls.jsonl"
+        self.timing_log_path = self.log_dir / "timing.jsonl"
         self._log_lock = threading.Lock()
+        self._timing_lock = threading.Lock()
         self._image_lock = threading.Lock()
         self._image_store: Dict[str, str] = {}
         self._image_hash_to_id: Dict[str, str] = {}
@@ -269,6 +271,26 @@ class HLEMem0Bench:
         with self._log_lock:
             with open(self.llm_log_path, "a", encoding="utf-8") as f:
                 f.write(payload + "\n")
+
+    def _log_timing(self, event: str, elapsed: float, meta: Optional[Dict[str, Any]] = None) -> None:
+        """Append lightweight timing stats to a JSONL file for profiling."""
+        rec = {
+            "ts": time.strftime('%Y-%m-%dT%H:%M:%S'),
+            "event": event,
+            "elapsed_sec": round(float(elapsed), 3),
+        }
+        if meta:
+            rec.update(meta)
+        try:
+            text = json.dumps(rec, ensure_ascii=False, default=str)
+        except Exception:
+            text = json.dumps({"event": event, "elapsed_sec": float(elapsed), "meta": str(meta)}, ensure_ascii=False)
+        try:
+            with self._timing_lock:
+                with open(self.timing_log_path, "a", encoding="utf-8") as f:
+                    f.write(text + "\n")
+        except Exception:
+            logger.debug("Failed to log timing event", exc_info=True)
 
     def _apply_dataset_ratio(self, df: pd.DataFrame) -> pd.DataFrame:
         ratio = getattr(self, "dataset_ratio", 1.0)
@@ -555,14 +577,20 @@ class HLEMem0Bench:
         retrieved_ids: List[str] = []
         memory_image_ids: Set[str] = set()
         retrieved_topk = None
+        row_start = time.time()
+        timings: Dict[str, float] = {}
         if self.mem0_store and self.retrieve_k > 0:
             try:
                 tau = float(getattr(self, "tau", 0.0))
             except Exception:
                 tau = 0.0
+            t_mem_start = time.time()
             mems = self.mem0_store.search(q, limit=self.retrieve_k, threshold=tau)
+            timings["mem_search_sec"] = time.time() - t_mem_start
             retrieved_topk = [{"id": m.id, "score": m.score} for m in mems]
+            t_ctx_start = time.time()
             memory_ctx, retrieved_ids, memory_image_ids = self._build_memory_context(mems, self.retrieve_k)
+            timings["memory_ctx_build_sec"] = time.time() - t_ctx_start
 
         memory_images_info: List[Tuple[str, str, str]] = []
         if memory_image_ids:
@@ -581,11 +609,13 @@ class HLEMem0Bench:
         call_meta = {"question_id": row.get("id", None), "answer_type": answer_type, "phase": phase}
         gen_error = None
         try:
+            t_llm_start = time.time()
             output = self.llm.generate(
                 messages,
                 temperature=self.temperature,
                 # max_tokens=self.max_tokens,
             )
+            timings["llm_generate_sec"] = time.time() - t_llm_start
         except Exception as e:
             logger.error("LLM error: %s", e)
             gen_error = str(e)
@@ -593,7 +623,23 @@ class HLEMem0Bench:
         if gen_error:
             call_meta["error"] = gen_error
         self._log_llm_call("solution", messages, output, meta=call_meta)
+        t_judge_start = time.time()
         judge_res = self._hle_judge(q, gold, output or "", meta={"question_id": row.get("id", None)})
+        timings["judge_sec"] = time.time() - t_judge_start
+        timings["row_total_sec"] = time.time() - row_start
+        try:
+            self._log_timing(
+                "evaluate_row",
+                timings["row_total_sec"],
+                {
+                    "question_id": row.get("id", None),
+                    "phase": phase,
+                    "retrieved": len(retrieved_ids),
+                    **timings,
+                },
+            )
+        except Exception:
+            logger.debug("Failed to log timing for row", exc_info=True)
         correct = True if str(judge_res.get("correct", "no")).lower() == "yes" else False
 
         rec: Dict[str, Any] = {

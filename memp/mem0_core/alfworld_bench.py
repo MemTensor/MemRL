@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,9 +36,11 @@ class _MetaWrapper:
 class Mem0MemoryAdapter:
     """Adapt Mem0Store to the MemoryService interface AlfworldRunner expects."""
 
-    def __init__(self, store: Mem0Store, *, log_path: Optional[Path] = None) -> None:
+    def __init__(self, store: Mem0Store, *, log_path: Optional[Path] = None, timing_path: Optional[Path] = None) -> None:
         self.store = store
         self.log_path = log_path
+        self.timing_path = timing_path
+        self._timing_lock = threading.Lock()
 
     def _log(self, event: str, payload: Dict[str, Any]) -> None:
         if not self.log_path:
@@ -50,7 +53,29 @@ class Mem0MemoryAdapter:
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(text + "\n")
 
+    def _log_timing(self, event: str, elapsed: float, meta: Optional[Dict[str, Any]] = None) -> None:
+        if not self.timing_path:
+            return
+        rec = {
+            "ts": time.strftime('%Y-%m-%dT%H:%M:%S'),
+            "event": event,
+            "elapsed_sec": round(float(elapsed), 3),
+        }
+        if meta:
+            rec.update(meta)
+        try:
+            text = json.dumps(rec, ensure_ascii=False, default=str)
+        except Exception:
+            text = json.dumps({"event": event, "elapsed_sec": float(elapsed), "meta": str(meta)}, ensure_ascii=False)
+        try:
+            with self._timing_lock:
+                with open(self.timing_path, "a", encoding="utf-8") as f:
+                    f.write(text + "\n")
+        except Exception:
+            logger.debug("Failed to log timing event", exc_info=True)
+
     def retrieve_query(self, task_description: str, k: int = 5, threshold: float = 0.0):
+        t_start = time.time()
         try:
             memories = self.store.search(task_description, limit=k, threshold=threshold)
             wrapped = []
@@ -72,14 +97,20 @@ class Mem0MemoryAdapter:
             }
             topk_queries = [(m["memory_id"], m["score"]) for m in wrapped]
             self._log("mem0.search", {"query_preview": task_description[:80], "returned": len(wrapped)})
+            self._log_timing(
+                "mem0.search",
+                time.time() - t_start,
+                {"returned": len(wrapped), "k": k, "threshold": threshold},
+            )
             return result, topk_queries
-        except Exception:
+        except Exception as exc:
+            self._log_timing("mem0.search", time.time() - t_start, {"error": str(exc)})
             result = {
                 "actions": [],
                 "selected": [],
                 "candidates": [],
                 "simmax": 0.0,
-            }            
+            }
             return result, []
 
     def add_memories(
@@ -94,6 +125,7 @@ class Mem0MemoryAdapter:
         metadatas = metadatas or [{} for _ in task_descriptions]
         for td, traj, succ, meta in zip(task_descriptions, trajectories, successes, metadatas):
             try:
+                t_add_start = time.time()
                 traj_text = json.dumps(traj, ensure_ascii=False, default=str)
                 traj_text = str(traj)
                 exp = Experience(
@@ -106,6 +138,11 @@ class Mem0MemoryAdapter:
                     metadata=meta or {},
                 )
                 self.store.add_experience(exp, infer=False)
+                self._log_timing(
+                    "mem0.add_experience",
+                    time.time() - t_add_start,
+                    {"success": bool(succ), "task_id": exp.task_id},
+                )
             except Exception:
                 self._log("mem0.add_experience", {"error": Exception})
         self._log("mem0.add_experience", {"count": len(task_descriptions)})
@@ -193,7 +230,8 @@ def main() -> None:
     )
     mem0_store = Mem0Store(mem0_cfg)
     mem0_log_path = log_dir / f"mem0_calls_{cfg.experiment.experiment_name}.jsonl"
-    memory_adapter = Mem0MemoryAdapter(mem0_store, log_path=mem0_log_path)
+    mem0_timing_path = log_dir / f"mem0_timing_{cfg.experiment.experiment_name}.jsonl"
+    memory_adapter = Mem0MemoryAdapter(mem0_store, log_path=mem0_log_path, timing_path=mem0_timing_path)
 
     alfworld_config_path = PROJECT_ROOT / "configs" / "envs" / "alfworld.yaml"
     runner = AlfworldRunner(

@@ -18,11 +18,14 @@ import pandas as pd
 import psutil
 from torch.utils.tensorboard import SummaryWriter
 
+import contextlib
+
 from .base_runner import BaseRunner
 from memp.service.memory_service import MemoryService
 from memp.service.value_driven import RLConfig
 from memp.providers.llm import OpenAILLM
 from memp.providers.embedding import OpenAIEmbedder
+from memp.utils.task_id import extract_task_id
 
 from memp.lifelongbench_eval.prompts import (
     DEFAULT_SYSTEM_PROMPT as LLB_DEFAULT_SYSTEM_PROMPT,
@@ -159,10 +162,19 @@ class LLBRunner(BaseRunner):
 
         self.rl_config: Optional[RLConfig] = rl_config
 
-        # Create LLM adapter for LLB LanguageModelAgent
+        # Optional per-task JSONL tracing (activated via TRACE_JSONL_PATH).
+        from memp.trace.llb_jsonl import LLBJsonlTracer
+        from memp.trace.tracing_llm import TracingLLMProvider
+
+        self._trace = LLBJsonlTracer.from_env()
+
+        # Create LLM adapter for LLB LanguageModelAgent (optionally wrapped for tracing)
         from memp.lifelongbench_eval.lm_adapter import MempOpenAIAdapter
 
-        self.adapter = MempOpenAIAdapter(self.llm_provider)
+        provider_for_adapter = self.llm_provider
+        if self._trace is not None:
+            provider_for_adapter = TracingLLMProvider(self.llm_provider, tracer=self._trace)
+        self.adapter = MempOpenAIAdapter(provider_for_adapter)
 
         # --- [TENSORBOARD] Initialize SummaryWriter ---
         tb_log_dir = (
@@ -324,21 +336,67 @@ class LLBRunner(BaseRunner):
         Returns:
             LanguageModelAgent instance configured with system prompt
         """
-        # Align prompt assembly ordering with memory_rl/dev/feat-mdp-llb:
-        # system prompt -> (optional) memory context -> strict output constraints at the very end.
-        if memory_context:
-            full_prompt = build_llb_prompt_with_memory(
-                task=self.task,
-                base_prompt=self._base_system_prompt,
-                memory_context=memory_context,
-            )
-        else:
-            full_prompt = self.system_prompt
+        full_prompt = self._build_llb_full_prompt(memory_context=memory_context)
 
         # Create and return agent
         return LanguageModelAgent(
             language_model=self.adapter, system_prompt=full_prompt
         )
+
+    def _build_llb_full_prompt(self, *, memory_context: Optional[str]) -> str:
+        """Build the exact system prompt used by LanguageModelAgent."""
+        # Align prompt assembly ordering with memory_rl/dev/feat-mdp-llb:
+        # system prompt -> (optional) memory context -> strict output constraints at the very end.
+        if memory_context:
+            return build_llb_prompt_with_memory(
+                task=self.task,
+                base_prompt=self._base_system_prompt,
+                memory_context=memory_context,
+            )
+        return self.system_prompt
+
+    def _session_to_chat_messages(self, session: Session) -> List[Dict[str, str]]:
+        """Best-effort extraction of full chat history as [{role, content}, ...]."""
+        if session is None:
+            return []
+
+        ch = getattr(session, "chat_history", None)
+        if ch is None and isinstance(session, dict):
+            ch = session.get("chat_history")
+
+        if not ch:
+            return []
+
+        # LLB ChatHistory type: has get_value_length/get_item_deep_copy.
+        if hasattr(ch, "get_value_length") and hasattr(ch, "get_item_deep_copy"):
+            msgs: List[Dict[str, str]] = []
+            n = int(ch.get_value_length())
+            for i in range(n):
+                item = ch.get_item_deep_copy(i)
+                role = getattr(item, "role", None)
+                content = getattr(item, "content", "")
+                role_s = str(role)
+                # normalize common role strings for readability
+                up = role_s.upper()
+                if "USER" in up:
+                    role_s = "user"
+                elif "AGENT" in up or "ASSISTANT" in up:
+                    role_s = "assistant"
+                msgs.append({"role": role_s, "content": str(content or "")})
+            return msgs
+
+        # Fallback: list[dict] or list[object]
+        msgs2: List[Dict[str, str]] = []
+        if isinstance(ch, list):
+            for m in ch:
+                if isinstance(m, dict):
+                    role = m.get("role") or m.get("speaker") or "unknown"
+                    content = m.get("content") or m.get("text") or ""
+                else:
+                    role = getattr(m, "role", "unknown")
+                    content = getattr(m, "content", str(m))
+                msgs2.append({"role": str(role), "content": str(content or "")})
+        return msgs2
 
     def process_retrieve_mems(
         self, retrieved_mems: List[dict]
@@ -454,30 +512,55 @@ class LLBRunner(BaseRunner):
         Returns:
             Trajectory dictionary or None if failed
         """
-        try:
-            # Use custom dataset if provided, otherwise use self.dataset
-            dataset = custom_dataset if custom_dataset is not None else self.dataset
-            data_file = (
-                custom_data_file if custom_data_file is not None else self.split_file
+        run_meta = {
+            "exp_name": self.exp_name,
+            "task": self.task,
+            "mode": self.mode,
+            "split_file": str(self.split_file),
+            "random_seed": int(self.random_seed),
+            "max_steps": int(self.max_steps),
+            "retrieve_k": int(self.retrieve_k),
+            "algorithm": str(self.algorithm),
+        }
+        cm = (
+            self._trace.task(
+                sample_index=str(sample_index),
+                run_meta=run_meta,
+                task_description="",  # filled once we parse entry
             )
+            if self._trace is not None
+            else contextlib.nullcontext(None)
+        )
 
-            # Get task entry
-            entry = dataset[sample_index]
-            task_description = self._task_description_from_entry(entry)
+        with cm as trace_ctx:
+            try:
+                # Use custom dataset if provided, otherwise use self.dataset
+                dataset = custom_dataset if custom_dataset is not None else self.dataset
+                data_file = (
+                    custom_data_file if custom_data_file is not None else self.split_file
+                )
 
-            # Retrieve memories
-            retrieved_mems = []
-            topk_queries = []
-            processed_mems = {}
-            memory_context = ""
+                # Get task entry
+                entry = dataset[sample_index]
+                task_description = self._task_description_from_entry(entry)
 
-            if self.memory_service is not None:
-                try:
-                    results = self.memory_service.retrieve_query(
-                        task_description=task_description,
-                        k=self.retrieve_k,
-                        threshold=(
-                            (
+                if trace_ctx is not None:
+                    trace_ctx.task_description = task_description
+
+                # Retrieve memories
+                retrieved_mems = []
+                topk_queries = []
+                processed_mems = {}
+                memory_context = ""
+
+                if self.memory_service is not None:
+                    try:
+                        results = self.memory_service.retrieve_query(
+                            task_description=task_description,
+                            k=self.retrieve_k,
+                            # Keep retrieval threshold aligned with memory_rl:
+                            # prefer rl_config.sim_threshold; fall back to rl_config.tau; else 0.0.
+                            threshold=(
                                 getattr(
                                     self.rl_config,
                                     "sim_threshold",
@@ -485,91 +568,177 @@ class LLBRunner(BaseRunner):
                                 )
                                 if self.rl_config
                                 else 0.0
-                            )
-                        ),
-                    )
-                    # retrieve_query returns tuple: (dict with 'selected' key, topk_queries)
-                    if isinstance(results, tuple):
-                        retrieved_mems = results[0]["selected"]
-                        topk_queries = results[1]
-                    else:
-                        retrieved_mems = []
-                        topk_queries = []
+                            ),
+                        )
+                        # retrieve_query returns tuple: (dict with 'selected' key, topk_queries)
+                        if isinstance(results, tuple):
+                            retrieved_mems = results[0]["selected"]
+                            topk_queries = results[1]
+                        else:
+                            retrieved_mems = []
+                            topk_queries = []
 
-                    # Process and categorize memories
-                    processed_mems = self.process_retrieve_mems(retrieved_mems)
+                        # Process and categorize memories
+                        processed_mems = self.process_retrieve_mems(retrieved_mems)
 
-                    # Format memory context from categorized memories
-                    if processed_mems:
-                        memory_context = self._format_memory_context(processed_mems)
-                except Exception as e:
-                    logger.warning(f"Memory retrieval failed for {sample_index}: {e}")
+                        # Format memory context from categorized memories
+                        if processed_mems:
+                            memory_context = self._format_memory_context(processed_mems)
 
-            # Create agent with memory context
-            agent = self._create_llb_agent(memory_context=memory_context)
+                        if trace_ctx is not None:
+                            from memp.trace.llb_jsonl import summarize_text
 
-            # Create new task instance for this sample (avoid state pollution)
-            from memp.lifelongbench_eval.task_wrappers import build_task
+                            def _mem_summary(m: Dict[str, Any]) -> Dict[str, Any]:
+                                md = m.get("metadata")
+                                md_summary = None
+                                try:
+                                    if hasattr(md, "model_dump"):
+                                        md_summary = md.model_dump()
+                                    elif isinstance(md, dict):
+                                        md_summary = dict(md)
+                                    elif md is not None:
+                                        md_summary = {"repr": str(md)}
+                                except Exception:
+                                    md_summary = {"repr": str(md)}
 
-            task_obj, _ = build_task(
-                task=self.task,
-                data_file_path=data_file,
-                max_round=self.max_steps,
-                os_timeout=self.os_timeout,
-                kg_sparql_url=self.sparql_url,
-                kg_ontology_dir=self.ontology_dir,
-                kg_offline_fallback=self.kg_offline_fallback,
-            )
+                                # Align with retrieval task_id de-dup (task_id -> sample_index -> id).
+                                # NOTE: task_id can legally be 0, so avoid truthiness-based fallbacks.
+                                task_id = extract_task_id(md_summary if isinstance(md_summary, dict) else None)
 
-            # Create session
-            session = Session(task_name=self.task_name, sample_index=sample_index)
+                                return {
+                                    "memory_id": m.get("memory_id"),
+                                    "task_id": (str(task_id) if task_id is not None else None),
+                                    "similarity": float(
+                                        m.get("similarity", 0.0) or 0.0
+                                    ),
+                                    "similarity_z": float(
+                                        m.get("similarity_z", 0.0) or 0.0
+                                    ),
+                                    "q_estimate": float(m.get("q_estimate", 0.0) or 0.0),
+                                    "q_z": float(m.get("q_z", 0.0) or 0.0),
+                                    "score": float(m.get("score", 0.0) or 0.0),
+                                    "metadata": md_summary,
+                                }
 
-            # Reset task
-            task_obj.reset(session)
+                            trace_ctx.retrieval = {
+                                "params": {
+                                    "k_retrieve": int(self.retrieve_k),
+                                    "threshold": float(thr),
+                                    "rl_topk": int(getattr(self.rl_config, "topk", 0) or 0)
+                                    if self.rl_config
+                                    else None,
+                                    "dedup_by_task_id": bool(
+                                        getattr(self.memory_service, "dedup_by_task_id", False)
+                                    )
+                                    if self.memory_service is not None
+                                    else None,
+                                    "weight_sim": float(
+                                        getattr(self.rl_config, "weight_sim", 0.0) or 0.0
+                                    )
+                                    if self.rl_config
+                                    else None,
+                                    "weight_q": float(
+                                        getattr(self.rl_config, "weight_q", 0.0) or 0.0
+                                    )
+                                    if self.rl_config
+                                    else None,
+                                },
+                                "topk_queries": [
+                                    {
+                                        "query": summarize_text(str(q)),
+                                        "similarity": float(sim),
+                                    }
+                                    for (q, sim) in (topk_queries or [])
+                                ],
+                                "selected_memories_by_bucket": {
+                                    str(k): [_mem_summary(m) for m in v]
+                                    for k, v in (processed_mems or {}).items()
+                                },
+                            }
+                    except Exception as e:
+                        logger.warning(f"Memory retrieval failed for {sample_index}: {e}")
 
-            # Run inference loop
-            step_count = 0
-            while session.sample_status == SampleStatus.RUNNING:
-                agent.inference(session)
-                task_obj.interact(session)
-                step_count += 1
+                # Create agent with memory context
+                full_prompt = self._build_llb_full_prompt(memory_context=memory_context)
+                if trace_ctx is not None:
+                    trace_ctx.set_full_system_prompt(full_prompt)
+                agent = LanguageModelAgent(
+                    language_model=self.adapter, system_prompt=full_prompt
+                )
 
-                # Safety check
-                if step_count > self.max_steps * 2:
-                    logger.warning(
-                        f"Sample {sample_index} exceeded max steps, terminating"
-                    )
-                    break
+                # Create new task instance for this sample (avoid state pollution)
+                from memp.lifelongbench_eval.task_wrappers import build_task
 
-            # Complete the session
-            task_obj.complete(session)
+                task_obj, _ = build_task(
+                    task=self.task,
+                    data_file_path=data_file,
+                    max_round=self.max_steps,
+                    os_timeout=self.os_timeout,
+                    kg_sparql_url=self.sparql_url,
+                    kg_ontology_dir=self.ontology_dir,
+                    kg_offline_fallback=self.kg_offline_fallback,
+                )
 
-            # Check success
-            success = self._session_success(session)
+                # Create session
+                session = Session(task_name=self.task_name, sample_index=sample_index)
 
-            # Convert session to trajectory string
-            trajectory = self._session_to_trajectory(session)
-            if not trajectory:
-                trajectory = ""  # Fallback to empty string
+                # Reset task
+                task_obj.reset(session)
 
-            return {
-                "sample_index": sample_index,
-                "task_description": task_description,
-                "trajectory": trajectory,  # String for add_memories
-                "retrieved_mems": processed_mems,  # Use processed memories from process_retrieve_mems
-                "retrieved_queries": (
-                    topk_queries if topk_queries else [(task_description, 1.0)]
-                ),  # Use actual topk_queries
-                "session": session,
-                "success": success,
-                "steps": step_count,
-            }
+                # Run inference loop
+                step_count = 0
+                while session.sample_status == SampleStatus.RUNNING:
+                    agent.inference(session)
+                    task_obj.interact(session)
+                    step_count += 1
 
-        except Exception as e:
-            logger.error(
-                f"Failed to sample trajectory for {sample_index}: {e}", exc_info=True
-            )
-            return None
+                    # Safety check
+                    if step_count > self.max_steps * 2:
+                        logger.warning(
+                            f"Sample {sample_index} exceeded max steps, terminating"
+                        )
+                        break
+
+                # Complete the session
+                task_obj.complete(session)
+
+                # Check success
+                success = self._session_success(session)
+
+                # Convert session to trajectory string
+                trajectory = self._session_to_trajectory(session)
+                if not trajectory:
+                    trajectory = ""  # Fallback to empty string
+
+                if trace_ctx is not None:
+                    trace_ctx.interaction = {
+                        "chat_history_final": self._session_to_chat_messages(session),
+                    }
+                    trace_ctx.outcome = {
+                        "success": bool(success),
+                        "steps": int(step_count),
+                    }
+
+                return {
+                    "sample_index": sample_index,
+                    "task_description": task_description,
+                    "trajectory": trajectory,  # String for add_memories
+                    "retrieved_mems": processed_mems,  # Categorized selected memories
+                    "retrieved_queries": (
+                        topk_queries if topk_queries else [(task_description, 1.0)]
+                    ),
+                    "session": session,
+                    "success": success,
+                    "steps": step_count,
+                }
+
+            except Exception as e:
+                if trace_ctx is not None:
+                    trace_ctx.error = {"type": type(e).__name__, "message": str(e)}
+                logger.error(
+                    f"Failed to sample trajectory for {sample_index}: {e}", exc_info=True
+                )
+                return None
 
     def _format_memory_context(
         self, processed_mems: Dict[str, List[dict]], budget_tokens: Optional[int] = None
@@ -1004,22 +1173,40 @@ class LLBRunner(BaseRunner):
                     )
 
                 # 4. Prepare metadata for new memories
-                metadatas_update = [
-                    {
-                        "source_benchmark": f"llb_{self.task}",
-                        "success": traj["success"],
-                        "q_value": (
-                            float(self.rl_config.q_init_pos)
-                            if traj["success"]
-                            else float(self.rl_config.q_init_neg)
-                        ),
-                        "q_visits": 0,
-                        "q_updated_at": datetime.now().isoformat(),
-                        "last_used_at": datetime.now().isoformat(),
-                        "reward_ma": 0.0,
-                    }
-                    for traj in collected_trajs
-                ]
+                #
+                # IMPORTANT (LLB alignment / de-dup):
+                # - Persist task_id/sample_index so "dedup by task_id" works in retrieval,
+                #   especially when multiple epochs create multiple memories for the same task.
+                # - Use numeric task ids when possible to align with legacy memory_rl traces.
+                metadatas_update: List[Dict[str, Any]] = []
+                for traj in collected_trajs:
+                    raw_sid = traj.get("sample_index")
+                    task_id: Any = raw_sid
+                    try:
+                        if raw_sid is not None and str(raw_sid).strip().isdigit():
+                            task_id = int(str(raw_sid).strip())
+                    except Exception:
+                        task_id = raw_sid
+
+                    metadatas_update.append(
+                        {
+                            "source_benchmark": f"llb_{self.task}",
+                            "phase": "train",
+                            "lb_epoch": int(section_num),
+                            "sample_index": task_id,
+                            "task_id": task_id,
+                            "success": traj["success"],
+                            "q_value": (
+                                float(self.rl_config.q_init_pos)
+                                if traj["success"]
+                                else float(self.rl_config.q_init_neg)
+                            ),
+                            "q_visits": 0,
+                            "q_updated_at": datetime.now().isoformat(),
+                            "last_used_at": datetime.now().isoformat(),
+                            "reward_ma": 0.0,
+                        }
+                    )
 
                 # 5. Add memories using add_memories (batch update)
                 result_vis = self.memory_service.add_memories(

@@ -204,15 +204,26 @@ class OpenAILLM(BaseLLM):
         Raises:
             LLMError: If generation fails after retries
         """
-        # Merge default parameters with provided kwargs
+        # Merge default parameters with provided kwargs.
+        #
+        # IMPORTANT (LLB compatibility):
+        # - LLB may not pass max_tokens per-call.
+        # - In that case we must honor the configured default_max_tokens from YAML,
+        #   otherwise the backend's implicit default can truncate generations.
         generation_kwargs = {
             "model": self.model,
             "messages": messages,
             "temperature": kwargs.get("temperature", self.default_temperature),
         }
-        
-        # if self.default_max_tokens:
-        #     generation_kwargs["max_tokens"] = kwargs.get("max_tokens", self.default_max_tokens)
+
+        # Accept either OpenAI-style `max_tokens` or LLB-style `max_completion_tokens`.
+        if "max_tokens" not in kwargs and "max_completion_tokens" in kwargs:
+            kwargs["max_tokens"] = kwargs.get("max_completion_tokens")
+
+        if "max_tokens" in kwargs:
+            generation_kwargs["max_tokens"] = kwargs.get("max_tokens")
+        elif self.default_max_tokens is not None:
+            generation_kwargs["max_tokens"] = self.default_max_tokens
         
         # Add any additional kwargs
         for key, value in kwargs.items():
@@ -414,4 +425,3 @@ class MockLLM(BaseLLM):
         words = text.lower().split()
         keywords = [w for w in words if len(w) > 3][:max_keywords]
         return keywords if keywords else ["test", "keyword"]
-

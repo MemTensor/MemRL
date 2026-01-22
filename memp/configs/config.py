@@ -19,7 +19,9 @@ class LLMConfig(BaseModel):
     provider: str = Field(default="openai", description="LLM provider name")
     api_key: str = Field(default="sk-8", 
                         description="API key for authentication")
-    base_url: Optional[str] = Field(default="https://openai.com/v1", description="Base URL for API")
+    base_url: Optional[str] = Field(default="https://api.openai.com/v1", description="Base URL for API")
+    # Optional Azure/OpenAI-style API versioning. Some runners pass this through.
+    api_version: Optional[str] = Field(default=None, description="Optional API version for some providers (e.g. Azure OpenAI)")
     model: str = Field(default="gpt-4.1-mini", description="Model name")
     temperature: float = Field(default=0.7, ge=0, le=2, description="Generation temperature")
     max_tokens: Optional[int] = Field(default=None, gt=0, description="Maximum tokens")
@@ -38,7 +40,8 @@ class EmbeddingConfig(BaseModel):
     provider: str = Field(default="openai", description="Embedding provider name")
     api_key: str = Field(default="sk-8",
                         description="API key for authentication")
-    base_url: Optional[str] = Field(default="https://openai.com/v1", description="Base URL for API")
+    base_url: Optional[str] = Field(default="https://api.openai.com/v1", description="Base URL for API")
+    api_version: Optional[str] = Field(default=None, description="Optional API version for some providers (e.g. Azure OpenAI)")
     model: str = Field(default="text-embedding-3-large", description="Embedding model name")
     max_text_len: int = Field(
         default=8196,
@@ -81,6 +84,10 @@ class MemoryConfig(BaseModel):
     sim_norm_mean: float = Field(default=0, description="Mean for similarity normalization")
     sim_norm_std: float = Field(default=0, description="Standard deviation for similarity normalization")
 
+    # Optional checkpoint loading for runners that support resuming memory state.
+    load_from_checkpoint: bool = Field(default=False, description="Whether to load memory state from a checkpoint snapshot")
+    checkpoint_path: Optional[str] = Field(default=None, description="Path to a memory checkpoint snapshot to load (if enabled)")
+
 
 class EnvironmentConfig(BaseModel):
     """Configuration for environment-specific settings."""
@@ -109,6 +116,41 @@ class ExperimentConfig(BaseModel):
     )
     mode: str = Field(
         default="train", description="Control whether to only train or test"
+    )
+
+    # Optional tracing (LLB JSONL) controlled by YAML (YAML overrides env vars when set).
+    trace_jsonl_path: Optional[str] = Field(
+        default=None,
+        description="If set, enable LLB per-task JSONL tracing and write to this path.",
+    )
+    trace_sample_filter: Optional[str] = Field(
+        default=None,
+        description="Optional task filter for tracing: digits=first N tasks; or comma-separated sample_index list.",
+    )
+
+    # LLB retrieval behavior toggles (used only by LLB runner entrypoints).
+    llb_use_z_score_normalization: bool = Field(
+        default=True,
+        description=(
+            "LLB only: whether to z-score normalize similarity/q before hybrid scoring. "
+            "Set false to rank by raw similarity + raw q (closer to legacy behavior)."
+        ),
+    )
+    llb_q_floor: Optional[float] = Field(
+        default=None,
+        description=(
+            "LLB only: if set, overrides rl_config.q_floor for LLB runs. "
+            "Mimics memory_rl's q_floor to prevent Q from dropping below this value "
+            "(applied during both Q update and retrieval scoring)."
+        ),
+    )
+    llb_dedup_by_task_id: bool = Field(
+        default=False,
+        description=(
+            "LLB only: when selecting the final top-k retrieved memories, deduplicate by task_id "
+            "(fallback to sample_index/id; if still missing, treated as unique). "
+            "This mimics memory_rl's task-level Phase-B behavior and reduces same-task repeats."
+        ),
     )
 
     # LLB-specific parameters
@@ -145,7 +187,6 @@ class ExperimentConfig(BaseModel):
     enable_logging: bool = Field(default=True, description="Enable detailed logging")
     log_level: str = Field(default="INFO", description="Logging level")
 
-
 class RLConfig(BaseModel):
     """Configuration for reinforcement learning parameters."""
 
@@ -155,6 +196,13 @@ class RLConfig(BaseModel):
     gamma: float = Field(default=0.0, description="Discount factor (default 0 for single-step)")
     q_init_pos: float = Field(default=0.0, description="Optimistic initialization for positive Q-values")
     q_init_neg: float = Field(default=0.0, description="Initialization for negative Q-values")
+    q_floor: Optional[float] = Field(
+        default=None,
+        description=(
+            "Minimum allowed Q value (optional). "
+            "Only applied by runners that explicitly enable it (e.g., LLB via experiment.llb_q_floor)."
+        ),
+    )
     success_reward: float = Field(default=1.0, description="Reward for successful outcome")
     failure_reward: float = Field(default=-1.0, description="Reward for failure outcome")
     # Retrieval filtering threshold used by runners when calling MemoryService.retrieve_query(...).

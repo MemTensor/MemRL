@@ -56,6 +56,7 @@ from memp.service.strategies import (
 from memp.providers.llm import OpenAILLM
 from memp.providers.embedding import OpenAIEmbedder
 from memp.run.llb_rl_runner import LLBRunner
+from memp.trace.llb_jsonl import apply_trace_env_from_experiment_config
 
 
 # (The setup_logging function remains the same)
@@ -100,6 +101,9 @@ def main():
         config_path = project_root / "configs" / "rl_llb_config.yaml"
         config = MempConfig.from_yaml(str(config_path))
         setup_logging(project_root, config.experiment.experiment_name)
+
+        # Optional JSONL tracing config (env vars take precedence).
+        apply_trace_env_from_experiment_config(config.experiment)
 
         # Use a temporary directory for all runtime artifacts (like mos_config.json and the DB)
         temp_dir = tempfile.mkdtemp(prefix="memp_live_agent_run_")
@@ -184,6 +188,25 @@ def main():
 
         enable_value_driven = config.experiment.enable_value_driven
         rl_config = config.rl_config
+        # LLB-only: optionally enforce a Q-value floor (memory_rl-style).
+        # Keep the knob under experiment.* so other benchmarks are unaffected.
+        if getattr(config.experiment, "llb_q_floor", None) is not None:
+            try:
+                # pydantic v2
+                rl_config = rl_config.model_copy(
+                    update={"q_floor": float(config.experiment.llb_q_floor)}
+                )
+            except Exception:
+                # best-effort fallback for non-pydantic configs
+                try:
+                    setattr(rl_config, "q_floor", float(config.experiment.llb_q_floor))
+                except Exception:
+                    pass
+        logger.info(
+            "LLB effective q_floor=%s (experiment.llb_q_floor=%s)",
+            getattr(rl_config, "q_floor", None),
+            getattr(config.experiment, "llb_q_floor", None),
+        )
 
         logger.info("Config:\n%s", config.model_dump_json(indent=2))
 
@@ -201,6 +224,10 @@ def main():
             add_similarity_threshold=config.memory.add_similarity_threshold,
             enable_value_driven=enable_value_driven,
             rl_config=rl_config,
+            # LLB-only: optionally disable z-score normalization for retrieval scoring.
+            use_z_score_normalization=bool(config.experiment.llb_use_z_score_normalization),
+            # LLB-only: optionally deduplicate final top-k retrieved memories by task_id.
+            dedup_by_task_id=bool(getattr(config.experiment, "llb_dedup_by_task_id", False)),
         )
 
         # Load from checkpoint if configured
@@ -249,7 +276,14 @@ def main():
             split_file=config.experiment.split_file,
             valid_interval=config.experiment.valid_interval,
             test_interval=config.experiment.test_interval,
-            train_set_ratio=config.experiment.train_set_ratio,
+            # Backwards/forwards compatible naming across configs:
+            # - older code used "train_set_ratio"
+            # - current configs use "dataset_ratio"
+            train_set_ratio=getattr(
+                config.experiment,
+                "train_set_ratio",
+                getattr(config.experiment, "dataset_ratio", 1.0),
+            ),
             start_section=resumed_section,  # Resume from the checkpoint section
             algorithm=config.experiment.algorithm,
             val_before_train=config.experiment.val_before_train,

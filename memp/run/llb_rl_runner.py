@@ -555,20 +555,21 @@ class LLBRunner(BaseRunner):
 
                 if self.memory_service is not None:
                     try:
+                        # Keep retrieval threshold aligned with memory_rl:
+                        # prefer rl_config.sim_threshold; fall back to rl_config.tau; else 0.0.
+                        thr = (
+                            getattr(
+                                self.rl_config,
+                                "sim_threshold",
+                                getattr(self.rl_config, "tau", 0.0),
+                            )
+                            if self.rl_config
+                            else 0.0
+                        )
                         results = self.memory_service.retrieve_query(
                             task_description=task_description,
                             k=self.retrieve_k,
-                            # Keep retrieval threshold aligned with memory_rl:
-                            # prefer rl_config.sim_threshold; fall back to rl_config.tau; else 0.0.
-                            threshold=(
-                                getattr(
-                                    self.rl_config,
-                                    "sim_threshold",
-                                    getattr(self.rl_config, "tau", 0.0),
-                                )
-                                if self.rl_config
-                                else 0.0
-                            ),
+                            threshold=thr,
                         )
                         # retrieve_query returns tuple: (dict with 'selected' key, topk_queries)
                         if isinstance(results, tuple):

@@ -16,7 +16,10 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import psutil
-from torch.utils.tensorboard import SummaryWriter
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover - optional dependency
+    SummaryWriter = None  # type: ignore[assignment]
 
 import contextlib
 
@@ -183,8 +186,23 @@ class LLBRunner(BaseRunner):
             / "tensorboard"
             / f"exp_{self.exp_name}_{time.strftime('%Y%m%d-%H%M%S')}"
         )
-        self.writer = SummaryWriter(log_dir=str(tb_log_dir))
-        logger.info(f"TensorBoard logs will be saved to: {tb_log_dir}")
+        if SummaryWriter is None:
+            # Keep runner functional even when tensorboard isn't installed.
+            class _NoOpWriter:
+                def add_scalar(self, *args: Any, **kwargs: Any) -> None:
+                    return
+
+                def close(self) -> None:
+                    return
+
+            self.writer = _NoOpWriter()
+            logger.warning(
+                "TensorBoard is not available (missing dependency). "
+                "Proceeding without TensorBoard logging."
+            )
+        else:
+            self.writer = SummaryWriter(log_dir=str(tb_log_dir))
+            logger.info(f"TensorBoard logs will be saved to: {tb_log_dir}")
         self.ck_dir = (
             self.root
             / "results"
@@ -199,6 +217,13 @@ class LLBRunner(BaseRunner):
     def _log_token_usage(self, section_num: int, mini_batch: Optional[int] = None):
         """Log current token usage for LLM and Embedding providers."""
         try:
+            # Token usage logging is best-effort. Not all provider implementations
+            # expose get_token_usage() (e.g., some OpenAI-compatible clients).
+            if not hasattr(self.llm_provider, "get_token_usage") or not hasattr(
+                self.embedding_provider, "get_token_usage"
+            ):
+                return
+
             llm_usage = self.llm_provider.get_token_usage()
             emb_usage = self.embedding_provider.get_token_usage()
 
@@ -902,8 +927,16 @@ class LLBRunner(BaseRunner):
         )
         results_df = pd.DataFrame(self.results_log)
 
+        # Backwards-compatible schema handling:
+        # Older / different logging paths may not have included a 'mode' field.
+        # The analysis below expects it.
+        if "mode" not in results_df.columns:
+            results_df["mode"] = "train"
+
+        train_modes = {"build", "update", "train", "test"}
+
         # --- Training Performance ---
-        train_df = results_df[results_df["mode"].isin(["build", "update"])]
+        train_df = results_df[results_df["mode"].isin(train_modes)]
         if not train_df.empty:
             overall_success_rate = train_df["success"].mean()
             logger.info("\n--- Training Performance (on Train Set) ---")
@@ -923,7 +956,7 @@ class LLBRunner(BaseRunner):
             )
 
         # --- Evaluation Performance ---
-        eval_df = results_df[~results_df["mode"].isin(["build", "update"])]
+        eval_df = results_df[~results_df["mode"].isin(train_modes)]
         if not eval_df.empty:
             logger.info("\n--- Evaluation Performance Summary ---")
 
@@ -1267,6 +1300,7 @@ class LLBRunner(BaseRunner):
                     self.results_log.append(
                         {
                             "section": section_num,
+                            "mode": self.mode,
                             "success": traj_data["success"],
                             "steps": traj_data["steps"],
                         }

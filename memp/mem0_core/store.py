@@ -25,6 +25,9 @@ class Mem0Store:
     - 通过 log_callback 钩子发出结构化事件，方便上层写 JSONL 日志。
     """
 
+    # 保护 mem0 内部的嵌入接口不被超长文本拖垮；按字符截断即可避免 8196 上限报错
+    _MAX_EMBED_CHARS = 8196
+
     def __init__(
         self,
         cfg: Mem0Config,
@@ -158,6 +161,23 @@ class Mem0Store:
         self.client = Mem0Client(self.cfg)
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _truncate_for_embedding(self, text: str) -> str:
+        """
+        Clamp content length before passing to mem0 (embedding has a ~8k char limit).
+        Keep head/tail to retain signal while staying within _MAX_EMBED_CHARS.
+        """
+        if not text or len(text) <= self._MAX_EMBED_CHARS:
+            return text
+
+        marker = "\n\n...[TRUNCATED]...\n\n"
+        budget = self._MAX_EMBED_CHARS - len(marker)
+        head_len = budget // 2
+        tail_len = budget - head_len
+        return text[:head_len] + marker + text[-tail_len:]
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def add_experience(
@@ -179,10 +199,12 @@ class Mem0Store:
         # 这样无论是 BigCodeBench 还是 LifelongBench，每个 Experience 对应 mem0 中
         # 都是一条“task+trajectory”合在一起的记忆，便于后续检索与分析。
         full_content = (str(exp.task_text or "") + "\n\n" + str(exp.trajectory or "")).strip()
+        truncated_content = self._truncate_for_embedding(full_content)
         messages = [
             {
                 "role": "assistant",  # 视为“经验/解法”的输出
-                "content": full_content,
+                # 仅对嵌入/检索使用裁剪后的内容，避免超长触发 embedding 限制
+                "content": truncated_content,
             }
         ]
 
@@ -192,6 +214,11 @@ class Mem0Store:
             "phase": exp.phase,
             "success": bool(exp.success),
         }
+        # 保留原始全文在 metadata，避免信息丢失（不参与嵌入）
+        if truncated_content != full_content:
+            metadata["full_content"] = full_content
+            metadata["full_content_len"] = len(full_content)
+            metadata["truncated"] = True
         # Avoid accidental override of core keys from extra metadata.
         for k, v in (exp.metadata or {}).items():
             if k in metadata:

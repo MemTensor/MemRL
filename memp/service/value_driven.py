@@ -30,6 +30,7 @@ class RLConfig:
     gamma: float = 0.0             # discount factor (single-step default)
     q_init_pos: float = 0        # optimistic initialization
     q_init_neg: float = 0          # negative q init
+    q_floor: Optional[float] = None  # optional minimum Q value (disabled by default)
     success_reward: float = 1.0
     failure_reward: float = -1.0
     sim_threshold: float = 0.5     # retrieval filtering threshold (used by some runners)
@@ -101,6 +102,13 @@ class ValueAwareSelector:
                 q = float(q)
             except Exception:
                 q = self.cfg.q_init_pos
+
+            # Optional Q floor (keeps Q from dropping below a minimum).
+            if getattr(self.cfg, "q_floor", None) is not None:
+                try:
+                    q = max(float(self.cfg.q_floor), float(q))
+                except Exception:
+                    pass
 
             # optional recency boost
             if self.cfg.recency_boost > 0 and md.get("last_used_at"):
@@ -185,6 +193,13 @@ class QValueUpdater:
         old_q = float(old_meta.get("q_value", self.cfg.q_init_pos))
         target = float(reward) + (self.cfg.gamma * float(next_max_q or 0.0))
         new_q = (1.0 - self.cfg.alpha) * old_q + self.cfg.alpha * target
+
+        # Optional Q floor: prevents Q from dropping below configured minimum.
+        if getattr(self.cfg, "q_floor", None) is not None:
+            try:
+                new_q = max(float(self.cfg.q_floor), float(new_q))
+            except Exception:
+                pass
 
         visits = int(old_meta.get("q_visits", 0)) + 1
         # simple EMA for reward

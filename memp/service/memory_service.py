@@ -94,6 +94,7 @@ from .procedural_memory import ProceduralMemory
 from .builders import get_builder
 from .retrievers import get_retriever
 from .updater import get_updater
+from ..utils.task_id import extract_task_id
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -300,6 +301,12 @@ class MemoryService:
         # Similarity normalization constants (default from corpus stats; override via kwargs if needed)
         self.sim_norm_mean: float = float(kwargs.get("sim_norm_mean", 0.1856827586889267))
         self.sim_norm_std: float = float(kwargs.get("sim_norm_std", 0.09407906234264374)) or 1.0
+        # Optional: disable z-score normalization in hybrid scoring.
+        # This is intentionally plumbed via kwargs so only selected runners (e.g., LLB)
+        # change behavior without affecting other benchmarks by default.
+        self.use_z_score_normalization: bool = bool(kwargs.get("use_z_score_normalization", True))
+        # Optional: LLB-only Phase-B behavior to reduce repeated same-task memories.
+        self.dedup_by_task_id: bool = bool(kwargs.get("dedup_by_task_id", False))
 
         # Initialize MemOS
         try:
@@ -1161,11 +1168,15 @@ class MemoryService:
 
     def _normalize_similarity(self, sim: float) -> float:
         """Z-norm similarity using precomputed mean/std."""
+        if not getattr(self, "use_z_score_normalization", True):
+            return float(sim)
         std = self.sim_norm_std if self.sim_norm_std and self.sim_norm_std > 1e-9 else 1.0
         return (sim - self.sim_norm_mean) / std
     
     def _normalize_q(self, q: float, mean: float, std: float) -> float:
         """Z-norm q using provided mean/std (per-call stats)."""
+        if not getattr(self, "use_z_score_normalization", True):
+            return float(q)
         std = std if std and std > 1e-9 else 1.0
         z = (q - mean) / std
         return max(min(z, 3.0), -3.0)
@@ -1290,6 +1301,9 @@ class MemoryService:
                 # Check _q_cache first for latest Q-value
                 mem_id = c.get("memory_id")
                 md = _meta_to_dict(c.get("metadata"))
+                # Stable "task" identifier for de-dup (LLB-only usage).
+                # NOTE: task_id can legally be 0, so avoid truthiness-based fallbacks.
+                task_id = extract_task_id(md)
 
                 if mem_id and mem_id in self._q_cache:
                     q = self._q_cache[mem_id]
@@ -1323,8 +1337,17 @@ class MemoryService:
                     if isinstance(ts, str) and len(ts) >= 10:
                         q += self.rl_config.recency_boost
 
+                # Optional Q floor (LLB may set this via experiment.llb_q_floor).
+                q_floor = getattr(self.rl_config, "q_floor", None)
+                if q_floor is not None:
+                    try:
+                        q = max(float(q_floor), float(q))
+                    except Exception:
+                        pass
+
                 c_local = dict(c)
                 c_local["q_estimate"] = q
+                c_local["task_id"] = (str(task_id) if task_id is not None else None)
                 q_values.append(q)
                 enriched.append(c_local)
 
@@ -1372,14 +1395,32 @@ class MemoryService:
             enriched_sorted = sorted(enriched, key=lambda x: x["score"], reverse=True)
 
             # -------- epsilon-greedy sampling --------
-            if random.random() < self.rl_config.epsilon:
-                selected = random.sample(
-                    enriched_sorted, min(self.rl_config.topk, len(enriched_sorted))
-                )
+            topk = min(self.rl_config.topk, len(enriched_sorted))
+            if not getattr(self, "dedup_by_task_id", False):
+                if random.random() < self.rl_config.epsilon:
+                    selected = random.sample(enriched_sorted, topk)
+                else:
+                    selected = enriched_sorted[:topk]
             else:
-                selected = enriched_sorted[
-                    : min(self.rl_config.topk, len(enriched_sorted))
-                ]
+                # LLB-only: de-dup by task_id while keeping epsilon-greedy behavior.
+                # - greedy: iterate score-desc
+                # - epsilon: shuffle before taking unique tasks
+                pool = list(enriched_sorted)
+                if random.random() < self.rl_config.epsilon:
+                    random.shuffle(pool)
+
+                selected = []
+                seen_tasks: set[str] = set()
+                for cand in pool:
+                    tid = cand.get("task_id")
+                    # If task_id missing, treat as unique by memory_id to avoid collapsing unrelated entries.
+                    key = str(tid) if tid else f"__missing_task_id__:{cand.get('memory_id')}"
+                    if key in seen_tasks:
+                        continue
+                    seen_tasks.add(key)
+                    selected.append(cand)
+                    if len(selected) >= topk:
+                        break
 
             return {
                 "actions": [s["memory_id"] for s in selected],

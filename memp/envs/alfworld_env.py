@@ -1,8 +1,11 @@
 from alfworld.agents.environment import get_environment
+import logging
 import os
 from .base import IEnv
 import yaml
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 def load_config_from_path(config_path: str, params=None):
     assert os.path.exists(config_path), f"Invalid config file: {config_path}"
@@ -82,7 +85,23 @@ class AlfWorldEnv(IEnv):
         """
         assert isinstance(actions, list), "When batch_size>1, actions must be a list"
 
-        obs_list, reward_list, done_list, infos = self.env.step(actions)
+        try:
+            obs_list, reward_list, done_list, infos = self.env.step(actions)
+        except Exception as e:
+            # If any environment process crashes (e.g., EOFError from workers), mark all as failed
+            # and continue instead of crashing the whole experiment.
+            logger.error("ALFWorld env.step failed; Error: %s", e, exc_info=True)
+            results = []
+            for i, action in enumerate(actions):
+                step_data = {
+                    "obs": "",
+                    "reward": 0.0,
+                    "done": False,
+                    "info": {"error": str(e)},
+                }
+                self.current_trace_list[i].append({"action": action, **step_data})
+                results.append(step_data)
+            return results
 
         results = []
         for i, (obs, reward, done, action) in enumerate(zip(obs_list, reward_list, done_list, actions)):
@@ -106,8 +125,18 @@ class AlfWorldEnv(IEnv):
         return self.current_trace_list[env_id]
 
     def close(self):
-        """Close ALFWorld env."""
-        self.env.close()
+        """
+        Close ALFWorld env. If the underlying TextWorld pipes are already broken,
+        swallow the exception so the caller can safely discard this env and move on.
+        Returns:
+            bool: True if closed cleanly, False if an error occurred.
+        """
+        try:
+            self.env.close()
+            return True
+        except Exception as e:
+            logger.error("ALFWorld env.close failed; discarding this env. Error: %s", e, exc_info=True)
+            return False
 
     def _process_obs(self, obs):
         """

@@ -53,10 +53,11 @@ class Mem0Client:
             import os
             from pathlib import Path
 
-            if self.cfg.api_key and not os.environ.get("OPENAI_API_KEY"):
+            if self.cfg.api_key:
                 os.environ["OPENAI_API_KEY"] = self.cfg.api_key
-            if self.cfg.base_url and not os.environ.get("OPENAI_BASE_URL"):
+            if self.cfg.base_url:
                 os.environ["OPENAI_BASE_URL"] = self.cfg.base_url
+                os.environ["OPENAI_API_BASE"] = self.cfg.base_url
 
             # 若外部尚未设置 MEM0_DIR，则为当前进程设置一个独立目录：
             # <repo_root>/.mem0/runtime_<pid>

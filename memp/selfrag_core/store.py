@@ -55,6 +55,10 @@ class SelfRAGStore:
 
         # 内存结构：List[Dict]，每条记录包含 id/text/embedding/metadata
         self._records: List[Dict[str, object]] = []
+        # 仅内存缓存：query -> {"gen": int, "candidates": List[RetrievedCandidate], "computed_upto": int}
+        # gen 用于在重新加载索引时整体失效；computed_upto 表示候选覆盖的 record 数量。
+        self._sim_cache: Dict[str, Dict[str, object]] = {}
+        self._cache_generation: int = 0
         self._load_index()
 
     def _snapshot_local_cache(self, local_cache_dir: Optional[str], snapshot_root: Path) -> None:
@@ -166,6 +170,9 @@ class SelfRAGStore:
                 len(self._records),
                 self._index_path,
             )
+            # 索引重载：提升缓存代次，清空缓存
+            self._cache_generation += 1
+            self._sim_cache.clear()
         except Exception:
             logger.exception("[selfrag-store] Failed to load index from %s", self._index_path)
 
@@ -178,6 +185,8 @@ class SelfRAGStore:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             except Exception:
                 logger.exception("[selfrag-store] Failed to append record to %s", self._index_path)
+            # 新增记录：不清空缓存，只保留缓存的 computed_upto，让后续查询补算增量
+            # 若需要彻底失效（例如删除记录），可提升 _cache_generation 并清空 _sim_cache
 
     # ------------------------------------------------------------------
     # 对外接口
@@ -245,49 +254,75 @@ class SelfRAGStore:
         # "list changed size during iteration" 异常。
         with self._lock:
             records = list(self._records)
+            cache_hit = False
+            cache_entry = self._sim_cache.get(query)
+            if cache_entry and cache_entry.get("gen") == self._cache_generation:
+                candidates = list(cache_entry.get("candidates") or [])
+                computed_upto = int(cache_entry.get("computed_upto", 0))
+            else:
+                candidates = []
+                computed_upto = 0
 
         if not records:
             return []
 
         k = top_k or self.cfg.top_k or 5
-        vec = self._embed_fn([query])[0]
 
-        def cosine(a: List[float], b: List[float]) -> float:
-            import math
+        # 生成/复用相似度结果：仅对新增记录做增量计算
+        if computed_upto < len(records):
+            vec = self._embed_fn([query])[0]
 
-            if not a or not b or len(a) != len(b):
-                return 0.0
-            num = sum(x * y for x, y in zip(a, b))
-            da = math.sqrt(sum(x * x for x in a))
-            db = math.sqrt(sum(y * y for y in b))
-            if da <= 0.0 or db <= 0.0:
-                return 0.0
-            return num / (da * db)
+            def cosine(a: List[float], b: List[float]) -> float:
+                import math
 
-        candidates: List[RetrievedCandidate] = []
-        for rec in records:
-            meta = rec.get("metadata") or {}
+                if not a or not b or len(a) != len(b):
+                    return 0.0
+                num = sum(x * y for x, y in zip(a, b))
+                da = math.sqrt(sum(x * x for x in a))
+                db = math.sqrt(sum(y * y for y in b))
+                if da <= 0.0 or db <= 0.0:
+                    return 0.0
+                return num / (da * db)
+
+            # 保持已有 candidates，追加新计算的记录
+            for rec in records[computed_upto:]:
+                meta = rec.get("metadata") or {}
+                emb = rec.get("embedding") or []
+                score = cosine(vec, emb)
+                candidates.append(
+                    RetrievedCandidate(
+                        id=str(rec.get("id")),
+                        text=str(rec.get("text") or ""),
+                        score=float(score),
+                        metadata=dict(meta),
+                    )
+                )
+            candidates.sort(key=lambda x: x.score, reverse=True)
+            with self._lock:
+                self._sim_cache[query] = {
+                    "gen": self._cache_generation,
+                    "computed_upto": len(records),
+                    "candidates": candidates,
+                }
+        else:
+            cache_hit = True
+
+        # 过滤后截取 top_k
+        filtered: List[RetrievedCandidate] = []
+        for cand in candidates:
             if filters:
                 ok = True
                 for kf, vf in filters.items():
-                    if meta.get(kf) != vf:
+                    if cand.metadata.get(kf) != vf:
                         ok = False
                         break
                 if not ok:
                     continue
-            emb = rec.get("embedding") or []
-            score = cosine(vec, emb)
-            candidates.append(
-                RetrievedCandidate(
-                    id=str(rec.get("id")),
-                    text=str(rec.get("text") or ""),
-                    score=float(score),
-                    metadata=dict(meta),
-                )
-            )
+            filtered.append(cand)
+            if len(filtered) >= k:
+                break
 
-        candidates.sort(key=lambda x: x.score, reverse=True)
-        out = candidates[:k]
+        out = filtered
 
         if self._log_callback:
             truncated = [
@@ -301,6 +336,7 @@ class SelfRAGStore:
                 "filters_keys": list((filters or {}).keys()),
                 "returned": len(out),
                 "top_samples": truncated,
+                "cache_hit": cache_hit,
             }
             try:
                 self._log_callback("selfrag.search", payload)

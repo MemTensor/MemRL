@@ -55,8 +55,8 @@ class SelfRAGStore:
 
         # 内存结构：List[Dict]，每条记录包含 id/text/embedding/metadata
         self._records: List[Dict[str, object]] = []
-        # 仅内存缓存：query -> {"gen": int, "candidates": List[RetrievedCandidate], "computed_upto": int}
-        # gen 用于在重新加载索引时整体失效；computed_upto 表示候选覆盖的 record 数量。
+        # 仅内存缓存：query -> {"gen": int, "scores": List[float], "computed_upto": int}
+        # 只存相似度分数，避免重复存储文本；gen 用于重新加载索引时整体失效。
         self._sim_cache: Dict[str, Dict[str, object]] = {}
         self._cache_generation: int = 0
         self._load_index()
@@ -257,10 +257,10 @@ class SelfRAGStore:
             cache_hit = False
             cache_entry = self._sim_cache.get(query)
             if cache_entry and cache_entry.get("gen") == self._cache_generation:
-                candidates = list(cache_entry.get("candidates") or [])
+                scores = list(cache_entry.get("scores") or [])
                 computed_upto = int(cache_entry.get("computed_upto", 0))
             else:
-                candidates = []
+                scores = []
                 computed_upto = 0
 
         if not records:
@@ -289,40 +289,44 @@ class SelfRAGStore:
                 meta = rec.get("metadata") or {}
                 emb = rec.get("embedding") or []
                 score = cosine(vec, emb)
-                candidates.append(
-                    RetrievedCandidate(
-                        id=str(rec.get("id")),
-                        text=str(rec.get("text") or ""),
-                        score=float(score),
-                        metadata=dict(meta),
-                    )
-                )
-            candidates.sort(key=lambda x: x.score, reverse=True)
+                scores.append(float(score))
             with self._lock:
                 self._sim_cache[query] = {
                     "gen": self._cache_generation,
                     "computed_upto": len(records),
-                    "candidates": candidates,
+                    "scores": scores,
                 }
         else:
             cache_hit = True
 
-        # 过滤后截取 top_k
-        filtered: List[RetrievedCandidate] = []
-        for cand in candidates:
+        # 根据 scores 构建候选并排序、过滤
+        pair_list = []
+        for rec, score in zip(records, scores):
+            meta = rec.get("metadata") or {}
+            pair_list.append((score, rec, meta))
+
+        pair_list.sort(key=lambda x: x[0], reverse=True)
+
+        out: List[RetrievedCandidate] = []
+        for score, rec, meta in pair_list:
             if filters:
                 ok = True
                 for kf, vf in filters.items():
-                    if cand.metadata.get(kf) != vf:
+                    if meta.get(kf) != vf:
                         ok = False
                         break
                 if not ok:
                     continue
-            filtered.append(cand)
-            if len(filtered) >= k:
+            out.append(
+                RetrievedCandidate(
+                    id=str(rec.get("id")),
+                    text=str(rec.get("text") or ""),
+                    score=float(score),
+                    metadata=dict(meta),
+                )
+            )
+            if len(out) >= k:
                 break
-
-        out = filtered
 
         if self._log_callback:
             truncated = [

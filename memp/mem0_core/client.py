@@ -389,7 +389,16 @@ class Mem0Client:
     @staticmethod
     def _to_retrieved_memory(item: Dict[str, Any]) -> RetrievedMemory:
         mem_id = str(item.get("id") or "")
-        memory_text = str(item.get("memory") or "")
+        # 优先使用 metadata 中保存的完整文本，避免截断内容
+        meta_obj = item.get("metadata")
+        full_text = None
+        if isinstance(meta_obj, dict):
+            full_text = meta_obj.get("full_content")
+            # pydantic model_extra 兼容
+            if full_text is None and isinstance(meta_obj.get("model_extra"), dict):
+                full_text = meta_obj["model_extra"].get("full_content")
+
+        memory_text = str(full_text or item.get("memory") or "")
         try:
             score = float(item.get("score", 0.0) or 0.0)
         except Exception:

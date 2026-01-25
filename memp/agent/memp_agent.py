@@ -56,10 +56,11 @@ class MempAgent(BaseAgent):
         redundant headers, system prompts, and old task descriptions.
         """
         try:
+            header = ""
+            trajectory_str = raw_content
             # 1. Split the content into the header (Task, Script) and the trajectory part
             if 'TRAJECTORY' in raw_content:
                 header, trajectory_str = raw_content.split('\n\nTRAJECTORY:\n', 1)
-            
             elif 'Failed approach' in raw_content:
                 header, trajectory_str = raw_content.split('\n\nFailed approach:\n', 1) 
 
@@ -101,10 +102,14 @@ class MempAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"Could not parse retrieved memory content, using raw content. Error: {e}")
             idx = raw_content.find('[')
-            raw_content = raw_content[idx:]
+            if idx != -1:
+                raw_content = raw_content[idx:]
             # Fallback to returning the raw content if parsing fails
-            trajectory_list = ast.literal_eval(raw_content)
-            
+            try:
+                trajectory_list = ast.literal_eval(raw_content)
+            except Exception:
+                return raw_content
+
             # 4. Keep only the portion after the last "Now, it's your turn"
             turn_idx = -1
             for i, msg in enumerate(trajectory_list):

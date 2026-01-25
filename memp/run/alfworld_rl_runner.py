@@ -920,10 +920,17 @@ class AlfworldRunner(BaseRunner):
         # --- Sample from each environment ---
         eval_trajectories = []
         for i, mini_batch_games in tqdm(enumerate(section_mini_batches), desc=f"Evaluating on {eval_type}"):
-            mini_batch_env = self.envs_built(mini_batch_games, task_type=eval_type)
-            collected_trajs = self._sample_from_batch(mini_batch_env)
-            eval_trajectories.extend(collected_trajs)
-            mini_batch_env.close()
+            mini_batch_env = None
+            try:
+                mini_batch_env = self.envs_built(mini_batch_games, task_type=eval_type)
+                collected_trajs = self._sample_from_batch(mini_batch_env)
+                eval_trajectories.extend(collected_trajs)
+            finally:
+                try:
+                    if mini_batch_env is not None:
+                        mini_batch_env.close()
+                except Exception:
+                    logger.debug("Failed to close eval mini_batch_env", exc_info=True)
 
         if not eval_trajectories:
             logger.warning(f"No trajectories were collected during {eval_type} evaluation.")
@@ -983,10 +990,17 @@ class AlfworldRunner(BaseRunner):
             logger.info(f"[BoN] Sampling round {b+1}/{bon_samples}...")
             eval_trajectories = []
             for i, mini_batch_game in tqdm(enumerate(section_mini_batches), desc=f"Evaluating round {b+1}/{bon_samples}"):
-                mini_batch_env = self.envs_built(mini_batch_game, task_type=eval_type)
-                collected_trajs = self._sample_from_batch(mini_batch_env)
-                mini_batch_env.close()
-                eval_trajectories.extend(collected_trajs)
+                mini_batch_env = None
+                try:
+                    mini_batch_env = self.envs_built(mini_batch_game, task_type=eval_type)
+                    collected_trajs = self._sample_from_batch(mini_batch_env)
+                    eval_trajectories.extend(collected_trajs)
+                finally:
+                    try:
+                        if mini_batch_env is not None:
+                            mini_batch_env.close()
+                    except Exception:
+                        logger.debug("Failed to close BoN eval mini_batch_env", exc_info=True)
 
             for index, trajs in enumerate(eval_trajectories):
                 all_eval_trajectories[index].append(trajs)
@@ -1083,9 +1097,16 @@ class AlfworldRunner(BaseRunner):
                     logger.info(f"Processing mini-batch {i+1}/{len(section_data)} in section {section_num}...")
 
                     # Collect trajectories
-                    mini_batch_env = self.envs_built(mini_batch_games, 'train')
-                    collected_trajs = self._sample_from_batch(mini_batch_env)
-                    mini_batch_env.close()
+                    mini_batch_env = None
+                    try:
+                        mini_batch_env = self.envs_built(mini_batch_games, 'train')
+                        collected_trajs = self._sample_from_batch(mini_batch_env)
+                    finally:
+                        try:
+                            if mini_batch_env is not None:
+                                mini_batch_env.close()
+                        except Exception:
+                            logger.debug("Failed to close mini_batch_env", exc_info=True)
 
                     logger.info(f"Mini-batch {i+1} collected {len(collected_trajs)} trajectories.")
                     section_trajectories.extend(collected_trajs)

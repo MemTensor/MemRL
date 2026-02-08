@@ -148,10 +148,13 @@ Notes:
 If you use MemRL in your research, please cite our paper:
 
 ```bibtex
-@inproceedings{memrl,
-  title     = {MemRL: Self-Evolving Agents via Runtime Reinforcement Learning on Episodic Memory},
-  author    = {TBD},
-  booktitle = {TBD},
-  year      = {TBD}
+@misc{zhang2026memrlselfevolvingagentsruntime,
+  title         = {MemRL: Self-Evolving Agents via Runtime Reinforcement Learning on Episodic Memory},
+  author        = {Shengtao Zhang and Jiaqian Wang and Ruiwen Zhou and Junwei Liao and Yuchen Feng and Weinan Zhang and Ying Wen and Zhiyu Li and Feiyu Xiong and Yutao Qi and Bo Tang and Muning Wen},
+  year          = {2026},
+  eprint        = {2601.03192},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url           = {https://arxiv.org/abs/2601.03192},
 }
 ```

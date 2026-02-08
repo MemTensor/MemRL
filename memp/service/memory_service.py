@@ -453,6 +453,63 @@ class MemoryService:
         )
         self.simple_keyer = SimpleKeyer(self.embedding_provider)
 
+    def _sync_cube_bound_components(
+        self,
+        *,
+        old_cube_id: str | None = None,
+        reason: str = "",
+    ) -> None:
+        """Keep cube-bound subcomponents aligned with the active cube.
+
+        Some value-driven components cache/bind a `default_cube_id` at init time.
+        When `MemoryService.default_cube_id` changes (e.g., resume from snapshot),
+        we must re-bind those components to avoid `Memory with ID ... not found`
+        from cross-cube get/update calls.
+        """
+        new_cube_id = getattr(self, "default_cube_id", None)
+        updated: list[str] = []
+
+        q_updater = getattr(self, "_q_updater", None)
+        if q_updater is not None:
+            try:
+                setattr(q_updater, "default_cube_id", new_cube_id)
+                updated.append("_q_updater")
+            except Exception:
+                logger.warning(
+                    "[CubeSwitch] Failed to sync _q_updater.default_cube_id",
+                    exc_info=True,
+                )
+
+        curator = getattr(self, "_curator", None)
+        if curator is not None:
+            try:
+                setattr(curator, "default_cube_id", new_cube_id)
+                updated.append("_curator")
+            except Exception:
+                logger.warning(
+                    "[CubeSwitch] Failed to sync _curator.default_cube_id",
+                    exc_info=True,
+                )
+            try:
+                curator_q = getattr(curator, "q_updater", None)
+                if curator_q is not None:
+                    setattr(curator_q, "default_cube_id", new_cube_id)
+                    updated.append("_curator.q_updater")
+            except Exception:
+                logger.warning(
+                    "[CubeSwitch] Failed to sync _curator.q_updater.default_cube_id",
+                    exc_info=True,
+                )
+
+        # One log line per cube switch to aid debugging without spamming logs.
+        logger.info(
+            "[CubeSwitch] reason=%s old=%s new=%s synced=%s",
+            reason or "(unspecified)",
+            old_cube_id,
+            new_cube_id,
+            ",".join(updated) if updated else "(none)",
+        )
+
     def build_memory(
         self,
         task_description: str,
@@ -883,6 +940,7 @@ class MemoryService:
             raise RuntimeError(f"Failed to load cube from '{cube_dir}': {e}")
 
         mem_cube_id = f"cube_{self.user_id}_{timestamp}"
+        old_cube_id = getattr(self, "default_cube_id", None)
         self.mos.register_mem_cube(cube, mem_cube_id=mem_cube_id, user_id=self.user_id)
         self.default_cube_id = mem_cube_id
         self._cube_timestamp = timestamp
@@ -895,6 +953,9 @@ class MemoryService:
                 self.user_id,
                 timestamp,
             )
+        )
+        self._sync_cube_bound_components(
+            old_cube_id=old_cube_id, reason=f"switch_to_cube_timestamp:{timestamp}"
         )
 
     def _prepare_memory_item(
@@ -1828,6 +1889,7 @@ class MemoryService:
             else:
                 raise
         target_id = mem_cube_id or f"cube_{self.user_id}_snapshot"
+        old_cube_id = getattr(self, "default_cube_id", None)
         # register_mem_cube 如果目标 ID 已存在会直接跳过，因此需要在加载快照时显式替换掉旧的 cube
         existing_cubes = getattr(self.mos, "mem_cubes", {})
         if target_id in existing_cubes:
@@ -1844,6 +1906,9 @@ class MemoryService:
         self.default_cube_id = target_id
         self._cube_dir = cube_dir
         self._qdrant_dir = qdrant_dir
+        self._sync_cube_bound_components(
+            old_cube_id=old_cube_id, reason="load_checkpoint_snapshot"
+        )
         cache_dir = os.path.join(snapshot_root, "local_cache")
         restored_cache = False
         if os.path.isdir(cache_dir):

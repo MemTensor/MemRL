@@ -73,6 +73,7 @@ class BCBRunner:
         output_dir: str,
         model_name: str,
         num_epochs: int = 3,
+        run_validation: bool = False,
         temperature: float = 0.0,
         max_tokens: int = 1280,
         retrieve_k: int = 5,
@@ -92,6 +93,7 @@ class BCBRunner:
         self.output_dir = os.path.abspath(output_dir)
         self.model_name = str(model_name)
         self.num_epochs = int(num_epochs)
+        self.run_validation = bool(run_validation)
         self.temperature = float(temperature)
         self.max_tokens = int(max_tokens)
         self.retrieve_k = int(retrieve_k)
@@ -589,6 +591,7 @@ class BCBRunner:
             "train_ratio": self.sel.train_ratio,
             "seed": self.sel.seed,
             "num_epochs": self.num_epochs,
+            "run_validation": self.run_validation,
             "model": self.model_name,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -612,13 +615,15 @@ class BCBRunner:
                 epoch_dir=epoch_dir,
                 update_memory=True,
             )
-            val_res = self._run_phase(
-                epoch=epoch,
-                phase="val",
-                task_ids=self._val_ids,
-                epoch_dir=epoch_dir,
-                update_memory=False,
-            )
+            val_res = None
+            if self.run_validation:
+                val_res = self._run_phase(
+                    epoch=epoch,
+                    phase="val",
+                    task_ids=self._val_ids,
+                    epoch_dir=epoch_dir,
+                    update_memory=False,
+                )
 
             # per-epoch snapshot
             try:

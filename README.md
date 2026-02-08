@@ -89,7 +89,7 @@ Quick start:
 
 1. Edit `configs/rl_llb_config.yaml`:
    - set `llm.api_key` / `embedding.api_key`
-   - set `experiment.task` (`db` | `os` | `kg`)
+   - set `experiment.task` (`db` | `os`)
    - set `experiment.split_file` (and optional `experiment.valid_file`)
 2. Run:
 
@@ -101,6 +101,10 @@ Dataset:
 
 - This repo’s runner expects a JSON dictionary keyed by `sample_index`, e.g.:
   `data/llb/os_interaction_train500.json`
+
+Note:
+
+- This open-source release currently supports LLB tasks: `db` and `os` (no `kg`).
 
 Optional tracing (LLB):
 

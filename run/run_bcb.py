@@ -240,6 +240,7 @@ def main() -> None:
         output_dir=str(run_dir),
         model_name=cfg.llm.model,
         num_epochs=int(args.epochs),
+        run_validation=bool(getattr(cfg.experiment, "bcb_run_validation", False)),
         temperature=(
             args.temperature if args.temperature is not None else cfg.llm.temperature
         ),

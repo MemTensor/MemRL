@@ -2,7 +2,7 @@
 
 Official code release for the paper:
 
-**MemRL: Self-Evolving Agents via Runtime Reinforcement Learning on Episodic Memory**
+[**MemRL: Self-Evolving Agents via Runtime Reinforcement Learning on Episodic Memory**](https://arxiv.org/abs/2601.03192)
 
 ## Abstract
 
@@ -117,11 +117,11 @@ python run/run_alfworld.py --config configs/rl_alf_config.yaml
 
 Important notes:
 
-- ALFWorld is treated as an **optional dependency**. You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
+- You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
 - This repo expects an ALFWorld environment config at:
   `configs/envs/alfworld.yaml`
   (create this file during ALFWorld setup).
-- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (configurable via `experiment.few_shot_path`).
+- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (provided in configs, Same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
 
 ### 4) HLE
 
@@ -131,16 +131,13 @@ Run:
 python run/run_hle.py \
   --config configs/rl_hle_config.yaml \
   --train /path/to/hle_train.parquet \
-  --valid /path/to/hle_valid.parquet \
-  --num_train 200 \
-  --num_valid 200
 ```
 
 Notes:
 
 - The runner accepts `--categories` and `--category_ratio` for category filtering/sampling.
-- By default, it looks for a parquet next to the repo (e.g., `../hle/test-00000-of-00001-filtered.parquet`), so you will typically want to pass `--train`/`--valid` explicitly.
-- `--judge_model` controls an optional separate judge LLM.
+- By default, it looks for a parquet next to the repo (e.g., `../hle/test-00000-of-00001-filtered.parquet`) Notice: We processed some questions' pictures from 'gif' to 'png', because its pic is actually a static pic.
+- `--judge_model` controls an optional separate judge LLM. We choose GPT-4o to align with [artificialanalysis](https://artificialanalysis.ai/evaluations/humanitys-last-exam).
 
 ## Project Layout
 

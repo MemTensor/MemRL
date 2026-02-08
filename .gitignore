@@ -22,12 +22,11 @@ data/
 .worktrees/
 code_review/
 
-## Local LLB run configs (may contain API keys / endpoints)
-configs/rl_llb_config.yaml
-configs/rl_llb_config.yaml.*
+
 
 ## Local convenience scripts / one-off analysis (intentionally not versioned)
 run_llb_screen_local.sh
+run_llb_trainonly_screen_local.sh
 scripts/analyze_llb_same_task_retrieval_prob.py
 
 ## Local scratch tests (keep them out of the OSS repo)

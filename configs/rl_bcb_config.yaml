@@ -20,7 +20,7 @@ llm:
   api_version: null
   model: "gpt-4o-mini"
   temperature: 0.0
-  max_tokens: 1280
+  max_tokens: 12800
 
 embedding:
   provider: "openai"

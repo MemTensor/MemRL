@@ -37,3 +37,6 @@ tests/test_llb_task_id_dedup.py
 tests/test_llb_trace_json_output.py
 tests/test_llb_zscore_toggle.py
 tests/test_task_id_extraction.py
+.claude/
+.codex/
+openspec/

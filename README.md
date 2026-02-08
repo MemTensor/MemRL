@@ -22,7 +22,7 @@ Files:
 
 This repo is a Python package under the **`memrl`** namespace.
 
-### Option A: pip (recommended, run all benchmarks)
+### Option A: pip (recommended)
 
 This installs MemRL and the additional dependencies required by the vendored benchmark repos
 (BigCodeBench / LifelongAgentBench), plus common parquet support for HLE.
@@ -33,18 +33,6 @@ source .venv/bin/activate
 
 pip install -U pip
 pip install -r requirements-benchmarks.txt
-```
-
-### Option B: pip (minimal, library only)
-
-```bash
-pip install -e .
-```
-
-### Option C: pip (development)
-
-```bash
-pip install -e ".[dev]"
 ```
 
 ### API keys / endpoints

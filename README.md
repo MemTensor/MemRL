@@ -10,7 +10,13 @@ The hallmark of human intelligence is the self-evolving ability to master new sk
 
 ## Framework Overview
 
-Framework figure (PDF): `framework_overview.pdf`
+Click to open the PDF:
+
+[![MemRL framework overview](framework_overview.png)](framework_overview.pdf)
+
+Files:
+- `framework_overview.png` (preview)
+- `framework_overview.pdf` (vector)
 
 ## Installation
 

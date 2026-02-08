@@ -118,6 +118,15 @@ class ExperimentConfig(BaseModel):
         default="train", description="Control whether to only train or test"
     )
 
+    # BCB evaluation toggles (used only by run/run_bcb.py).
+    bcb_run_validation: bool = Field(
+        default=False,
+        description=(
+            "BigCodeBench only: whether to run the validation phase. "
+            "If false, the BCB runner will run train-only by default."
+        ),
+    )
+
     # Optional tracing (LLB JSONL) controlled by YAML (YAML overrides env vars when set).
     trace_jsonl_path: Optional[str] = Field(
         default=None,

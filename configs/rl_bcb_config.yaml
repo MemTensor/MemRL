@@ -4,6 +4,7 @@
 # - This YAML must match `memrl.configs.config.MempConfig` (extra fields are forbidden).
 # - BCB-specific knobs (subset/split/epochs/train_ratio/split_file/data_path/...) are CLI args
 #   to `run/run_bcb.py` and are intentionally NOT in this YAML.
+# - BCB evaluation can be toggled via YAML: set `experiment.bcb_run_validation: true` to run val.
 # - You must replace llm.api_key / embedding.api_key before running.
 #
 # Example:
@@ -68,6 +69,8 @@ experiment:
   algorithm: "rl"
   val_before_train: true
   enable_value_driven: true
+  # BigCodeBench only: default train-only. Set true to also run validation.
+  bcb_run_validation: false
   random_seed: 42
   mode: "train"
 

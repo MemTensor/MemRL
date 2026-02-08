@@ -62,7 +62,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(project_root / "configs" / "rl_bcb_config.yaml"),
     )
-    p.add_argument("--subset", type=str, default="hard", choices=["hard", "full"])
+    # Default to the full BigCodeBench set. Use `--subset hard` for the smaller subset.
+    p.add_argument("--subset", type=str, default="full", choices=["hard", "full"])
     p.add_argument(
         "--split", type=str, default="instruct", choices=["instruct", "complete"]
     )

@@ -62,7 +62,6 @@ Run multi-epoch BCB memory benchmark:
 ```bash
 python run/run_bcb.py \
   --config configs/rl_bcb_config.yaml \
-  --subset hard \
   --split instruct \
   --epochs 3
 ```
@@ -82,6 +81,7 @@ Splits:
 Notes:
 
 - BigCodeBench evaluation uses the vendored repo under `3rdparty/bigcodebench-main`.
+- Default subset is `full`. Use `--subset hard` for the smaller hard subset.
 - Retrieval threshold: use `--retrieve_threshold` to override; otherwise it falls back to `rl_config.sim_threshold` (then `rl_config.tau`).
 
 ### 2) Lifelong Agent Bench (LLB / LifelongAgentBench)

@@ -6,7 +6,7 @@ This runner implements the same high-level structure used by other benchmarks:
   - per-epoch train then val
   - retrieval via MemoryService.retrieve_query (dict_memory + RL threshold)
   - train writes memories via MemoryService.add_memories (keeps dict_memory in sync)
-  - value-driven Q updates via MemoryService.update_values
+  - value-driven Q updates via MemoryService.update_values (best-effort)
   - per-epoch snapshots via MemoryService.save_checkpoint_snapshot(target_ck_dir, ckpt_id)
 """
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,26 @@ from memp.bigcodebench_eval.eval_utils import (
 from memp.bigcodebench_eval.task_wrappers import get_prompt, load_bcb_data, split_dataset, write_samples
 
 logger = logging.getLogger(__name__)
+
+# Default system prompt for memory-augmented code generation (aligned to memory_rl).
+DEFAULT_SYSTEM_PROMPT = """You are an expert Python programmer solving BigCodeBench coding tasks.
+
+You may receive a [Retrieved Memory Context] block with past experiences from similar problems.
+These are **references for learning**, not guaranteed solutions:
+- [MEMORY TYPE] SUCCESS_PROCEDURE: A successful approach from a similar task—learn the implementation pattern.
+- [MEMORY TYPE] FAILURE_REFLECTION: A failed attempt with lessons—avoid similar mistakes.
+
+Use the memories as inspiration, but always analyze your current task independently and
+adapt your approach based on its specific requirements. Generate clean, correct Python code.
+
+Hard constraints for BigCodeBench:
+- Do NOT change the required function signature, return type, or required exception types/messages.
+- Do NOT wrap specific exceptions into generic ones; keep the exact exception class and message if specified.
+- Import every module you use; remove unused imports; do not rely on implicit imports.
+- Avoid broad try/except (e.g., `except Exception`) unless the task explicitly requires it.
+- Avoid any network calls or extra file I/O beyond what the task specifies.
+- Keep code deterministic: no randomness, time-based logic, or unnecessary logging.
+"""
 
 
 @dataclass
@@ -55,6 +76,11 @@ class BCBRunner:
         temperature: float = 0.0,
         max_tokens: int = 1280,
         retrieve_k: int = 5,
+        # BigCodeBench uses a dedicated similarity threshold knob (separate from RL tau).
+        # If None, falls back to rl_config.sim_threshold (or rl_config.tau).
+        retrieve_threshold: Optional[float] = None,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        memory_budget_tokens: int = 2000,
         bcb_repo: Optional[str] = None,
         untrusted_hard_timeout_s: float = 120.0,
         eval_timeout_s: float = 60.0,
@@ -69,6 +95,12 @@ class BCBRunner:
         self.temperature = float(temperature)
         self.max_tokens = int(max_tokens)
         self.retrieve_k = int(retrieve_k)
+        self.retrieve_threshold = (
+            None if retrieve_threshold is None else float(retrieve_threshold)
+        )
+        self.system_prompt = str(system_prompt or "")
+        # NOTE: In memory_rl this is called "budget_tokens" but is used as a rough character budget.
+        self.memory_budget_tokens = int(memory_budget_tokens)
         self.bcb_repo = bcb_repo
         self.untrusted_hard_timeout_s = float(untrusted_hard_timeout_s)
         self.eval_timeout_s = float(eval_timeout_s)
@@ -80,7 +112,9 @@ class BCBRunner:
         self._val_ids: List[str] = []
 
     def _get_retrieve_threshold(self) -> float:
-        """Align with other benchmarks: use rl_config.sim_threshold (fallback to tau)."""
+        """BCB threshold knob (aligned to memory_rl)."""
+        if self.retrieve_threshold is not None:
+            return float(self.retrieve_threshold)
         try:
             rl_cfg = getattr(self.mem, "rl_config", None)
             if rl_cfg is None:
@@ -90,35 +124,177 @@ class BCBRunner:
             return 0.0
 
     def _format_memory_context(
-        self, selected_mems: List[Dict[str, Any]], *, budget_tokens: int = 2000
+        self, selected_mems: List[Dict[str, Any]]
     ) -> str:
+        # Align with memory_rl BCB adapter formatting.
         if not selected_mems:
             return ""
-        budget_chars = max(0, int(budget_tokens) * 4)
-        lines: List[str] = ["[Retrieved Memory Context]"]
-        used = 0
-        for idx, m in enumerate(selected_mems, start=1):
-            mem_id = m.get("memory_id") or m.get("id") or "unknown"
-            content = m.get("content") or ""
-            sim = m.get("similarity", None)
-            header = f"\n### Memory {idx} (id={mem_id}"
-            if sim is not None:
-                try:
-                    header += f", sim={float(sim):.3f}"
-                except Exception:
-                    pass
-            header += ")\n"
-            block = header + str(content).strip() + "\n"
-            if used + len(block) > budget_chars:
-                break
-            lines.append(block)
-            used += len(block)
-        return "\n".join(lines).strip() + "\n"
 
-    def _generate_code(self, prompt: str, *, memory_context: str = "") -> str:
+        parts: List[str] = ["# Relevant Code Examples from Memory\n"]
+
+        for i, c in enumerate(selected_mems, 1):
+            meta_obj = c.get("metadata")
+            meta: Dict[str, Any] = {}
+            if meta_obj is not None:
+                try:
+                    if hasattr(meta_obj, "model_dump"):
+                        meta = meta_obj.model_dump()  # type: ignore[assignment]
+                    elif isinstance(meta_obj, dict):
+                        meta = meta_obj
+                except Exception:
+                    meta = {}
+
+            outcome = meta.get("outcome", "unknown")
+            task_id = meta.get("task_id", "")
+
+            mem_item = c.get("memory_item")
+            task_desc = ""
+            try:
+                task_desc = str(getattr(mem_item, "memory", "") or "")
+            except Exception:
+                task_desc = ""
+
+            raw_content = c.get("content", c.get("full_content", "")) or ""
+            content = self._coerce_bcb_memory_content(
+                raw_content=raw_content,
+                outcome=outcome,
+                task_description=task_desc,
+            )
+            if not content:
+                continue
+
+            # Truncate if needed (memory_rl uses a rough per-entry budget).
+            if len(content) > self.memory_budget_tokens // len(selected_mems):
+                content = content[: self.memory_budget_tokens // len(selected_mems)] + "..."
+
+            parts.append(f"## Example {i} [{outcome.upper()}]")
+            if task_id:
+                parts.append(f"Task: {task_id}")
+            parts.append(content)
+            parts.append("")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _coerce_bcb_memory_content(
+        *,
+        raw_content: str,
+        outcome: str,
+        task_description: str,
+    ) -> str:
+        """
+        BCB-only prompt alignment:
+        - memory_rl stores full_content using [MEMORY TYPE]/[TASK]/... blocks.
+        - Other benchmarks must not be affected, so we coerce at *injection time*
+          for BCB (even if the stored full_content is in legacy "Task: ..." style).
+        """
+        text = str(raw_content or "").strip()
+        if not text:
+            return ""
+
+        # If it's already in the memory_rl format, keep as-is.
+        if "[MEMORY TYPE]" in text.upper():
+            return text
+
+        out = str(outcome or "unknown").strip().lower()
+        is_failure = out in {"failure", "fail", "failed", "0", "false", "no"}
+
+        if is_failure:
+            # Legacy adjustment content often looks like:
+            # "TASK REFLECTION:\nTask: ...\n\nReflection: ...".
+            # Prefer a line that begins with "Reflection:"; avoid matching "TASK REFLECTION:" header.
+            m = re.search(r"(?is)(?:^|\n)reflection\s*:\s*(.*)$", text)
+            reflection = (m.group(1) if m else text).strip()
+            td = task_description.strip() if task_description else ""
+            if not td:
+                # Fall back to whatever we have.
+                td = ""
+            return (
+                "[MEMORY TYPE] FAILURE_REFLECTION\n"
+                "[TASK]\n"
+                f"{td}\n\n"
+                "[REFLECTION]\n"
+                f"{reflection}"
+            ).strip()
+
+        # Success path: treat legacy body as execution trajectory.
+        body = text
+        m = re.match(r"(?is)^task\\s*:\\s*.*?\\n\\n(.*)$", text)
+        if m:
+            body = (m.group(1) or "").strip()
+        td = task_description.strip() if task_description else ""
+        return (
+            "[MEMORY TYPE] SUCCESS_PROCEDURE\n"
+            "[TASK]\n"
+            f"{td}\n\n"
+            "[EXECUTION TRAJECTORY]\n"
+            f"{body}"
+        ).strip()
+
+    @staticmethod
+    def _trajectory_from_raw_or_fallback(
+        *,
+        raw_response: str,
+        prompt: str,
+        code: str,
+        eval_res: Dict[str, Any],
+        retrieval: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Align with memory_rl BigCodeBench:
+        - Prefer trajectory = model raw output when available
+        - Otherwise fall back to a structured, step-style trajectory blob
+        """
+        if raw_response:
+            return raw_response
+
+        steps: List[str] = []
+        # Step 1: Original task prompt
+        steps.append("[STEP 1] TASK PROMPT")
+        steps.append(prompt or "")
+
+        # Step 2: Memory retrieval info (if any)
+        if retrieval:
+            trace = retrieval.get("trace", {}) or {}
+            steps.append("")
+            steps.append("[STEP 2] MEMORY RETRIEVAL")
+            steps.append(f"mode: {trace.get('mode', 'similarity')}")
+            steps.append(
+                f"retrieved_count: {trace.get('retrieved_count', retrieval.get('num_retrieved', 0))}"
+            )
+            steps.append(f"simmax: {trace.get('simmax', 0.0)}")
+            steps.append(f"selected_memory_ids: {retrieval.get('selected_ids', [])}")
+
+        # Step 3: Generated code
+        steps.append("")
+        steps.append("[STEP 3] GENERATED CODE")
+        steps.append("```python")
+        steps.append(code or "")
+        steps.append("```")
+
+        # Step 4: Evaluation result
+        steps.append("")
+        steps.append("[STEP 4] EVALUATION RESULT")
+        status = eval_res.get("status", "UNKNOWN")
+        steps.append(f"status: {status}")
+        error_msg = eval_res.get("error", "")
+        if error_msg:
+            steps.append("error:")
+            steps.append(str(error_msg))
+
+        return "\n".join(steps)
+
+    def _generate_raw(self, prompt: str, *, memory_context: str = "") -> str:
         messages: List[Dict[str, str]] = []
+
+        system_parts: List[str] = []
+        if self.system_prompt:
+            system_parts.append(self.system_prompt)
         if memory_context:
-            messages.append({"role": "system", "content": memory_context})
+            system_parts.append(memory_context)
+        if system_parts:
+            messages.append({"role": "system", "content": "\n\n".join(system_parts)})
+
         messages.append({"role": "user", "content": prompt})
         try:
             resp = self.llm.generate(
@@ -129,7 +305,10 @@ class BCBRunner:
         except Exception:
             logger.warning("LLM generation failed for BCB prompt", exc_info=True)
             return ""
-        return extract_code_from_response(resp or "")
+        return resp or ""
+
+    def _generate_code(self, prompt: str, *, memory_context: str = "") -> str:
+        return extract_code_from_response(self._generate_raw(prompt, memory_context=memory_context))
 
     # -------------------------- I/O helpers --------------------------
 
@@ -208,7 +387,7 @@ class BCBRunner:
         pass_count = 0
         total = len(task_ids)
 
-        # Buffered memory updates (mini-batch-like), consistent with other runners.
+        # Buffered memory + Q updates (mini-batch-like), aligned with other runners.
         pending_task_descriptions: List[str] = []
         pending_trajectories: List[str] = []
         pending_successes: List[bool] = []
@@ -217,7 +396,7 @@ class BCBRunner:
         pending_metadatas: List[Dict[str, Any]] = []
 
         def _flush_memory_updates() -> None:
-            if not update_memory or not pending_task_descriptions:
+            if not update_memory or not pending_task_descriptions or self.mem is None:
                 return
             try:
                 self.mem.update_values(
@@ -250,6 +429,7 @@ class BCBRunner:
             selected_ids: List[str] = []
             retrieved_topk_queries: Optional[List[Tuple[str, float]]] = None
             mem_context = ""
+            retrieval_trace: Dict[str, Any] = {}
 
             if self.mem is not None and self.retrieve_k > 0:
                 try:
@@ -265,15 +445,28 @@ class BCBRunner:
                         selected_mems = []
 
                     selected_ids = [
-                        str(m.get("memory_id"))
+                        str(m.get("memory_id") or m.get("id"))
                         for m in selected_mems
-                        if isinstance(m, dict) and m.get("memory_id")
+                        if isinstance(m, dict) and (m.get("memory_id") or m.get("id"))
                     ]
                     mem_context = self._format_memory_context(selected_mems)
+                    try:
+                        retrieval_trace = {
+                            "mode": "retrieve_query",
+                            "retrieved_count": len(selected_ids),
+                            "simmax": float((ret_result or {}).get("simmax", 0.0) or 0.0),
+                        }
+                    except Exception:
+                        retrieval_trace = {
+                            "mode": "retrieve_query",
+                            "retrieved_count": len(selected_ids),
+                            "simmax": 0.0,
+                        }
                 except Exception:
                     logger.debug("BCB retrieval failed for %s", task_id, exc_info=True)
 
-            code = self._generate_code(prompt, memory_context=mem_context)
+            raw_response = self._generate_raw(prompt, memory_context=mem_context)
+            code = extract_code_from_response(raw_response)
 
             retrieval_logs.append(
                 {
@@ -294,6 +487,7 @@ class BCBRunner:
                 "task_id": task_id,
                 "solution": code,
                 "prompt": prompt,
+                "raw_response": raw_response,
                 "epoch": epoch,
                 "phase": phase,
                 "model": self.model_name,
@@ -303,48 +497,43 @@ class BCBRunner:
             samples.append(sample)
 
             if update_memory:
-                traj = "\n".join(
-                    [
-                        f"[BCB] epoch={epoch} phase={phase} task_id={task_id}",
-                        "[PROMPT]",
-                        prompt,
-                        "[GENERATED CODE]",
-                        "```python",
-                        code,
-                        "```",
-                        "[EVAL]",
-                        json.dumps({"status": eval_res.get("status"), "error": eval_res.get("error")}, ensure_ascii=False),
-                    ]
-                )
-                # Align with other benchmarks: use add_memories() so dict_memory stays consistent.
-                try:
-                    rl_cfg = getattr(self.mem, "rl_config", None)
-                    q_init_pos = float(getattr(rl_cfg, "q_init_pos", 0.0)) if rl_cfg else 0.0
-                    q_init_neg = float(getattr(rl_cfg, "q_init_neg", 0.0)) if rl_cfg else 0.0
-                except Exception:
-                    q_init_pos, q_init_neg = 0.0, 0.0
-
                 meta = {
                     "source_benchmark": "bigcodebench",
                     "success": bool(ok),
-                    "q_value": (q_init_pos if ok else q_init_neg),
-                    "q_visits": 0,
-                    "q_updated_at": datetime.now().isoformat(),
-                    "last_used_at": datetime.now().isoformat(),
-                    "reward_ma": 0.0,
+                    # Fields used by memory_rl prompt formatting
                     "task_id": task_id,
+                    "outcome": "success" if ok else "failure",
+                    "outcome_success": bool(ok),
+                    "entry_point": str(task.get("entry_point", "")) if isinstance(task, dict) else "",
+                    "libs": (task.get("libs") if isinstance(task, dict) else None),
+                    "source": "conversation",
+                    "eval_status": eval_res.get("status"),
+                    "eval_error": eval_res.get("error"),
                     "bcb_epoch": epoch,
                     "phase": phase,
                     "model": self.model_name,
                 }
-
+                retrieval_for_traj = None
+                if selected_ids or retrieval_trace:
+                    retrieval_for_traj = {
+                        "selected_ids": list(selected_ids),
+                        "num_retrieved": len(selected_ids),
+                        "trace": retrieval_trace,
+                    }
                 pending_task_descriptions.append(prompt)
-                pending_trajectories.append(traj)
+                pending_trajectories.append(
+                    self._trajectory_from_raw_or_fallback(
+                        raw_response=raw_response,
+                        prompt=prompt,
+                        code=code,
+                        eval_res=eval_res,
+                        retrieval=retrieval_for_traj,
+                    )
+                )
                 pending_successes.append(bool(ok))
                 pending_retrieved_ids.append(list(selected_ids))
                 pending_retrieved_queries.append(retrieved_topk_queries)
                 pending_metadatas.append(meta)
-
                 if len(pending_task_descriptions) >= 25:
                     _flush_memory_updates()
 

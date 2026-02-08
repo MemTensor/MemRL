@@ -66,22 +66,91 @@ class MempBCBDecoder:
         return self._last_retrievals
 
     def _format_memory_context(self, candidates: List[Dict[str, Any]]) -> str:
+        # Align formatting with memory_rl BigCodeBench adapter.
         if not candidates:
             return ""
 
-        # Very rough token budgeting by characters (keeps dependency surface small).
-        budget_chars = max(0, int(self._budget) * 4)
-        lines: List[str] = ["[Retrieved Memory Context]"]
-        used = 0
-        for idx, c in enumerate(candidates, start=1):
-            content = c.get("content") or ""
-            mem_id = c.get("memory_id") or c.get("id") or "unknown"
-            block = f"\n### Memory {idx} (id={mem_id})\n{content}\n"
-            if used + len(block) > budget_chars:
-                break
-            lines.append(block)
-            used += len(block)
-        return "\n".join(lines).strip() + "\n"
+        parts: List[str] = ["# Relevant Code Examples from Memory\n"]
+
+        for i, c in enumerate(candidates, 1):
+            raw_content = c.get("content", c.get("full_content", "")) or ""
+
+            # Truncate if needed (rough per-entry budget by characters).
+            meta_obj = c.get("metadata")
+            meta: Dict[str, Any] = {}
+            if meta_obj is not None:
+                try:
+                    if hasattr(meta_obj, "model_dump"):
+                        meta = meta_obj.model_dump()  # type: ignore[assignment]
+                    elif isinstance(meta_obj, dict):
+                        meta = meta_obj
+                except Exception:
+                    meta = {}
+
+            outcome = meta.get("outcome", "unknown")
+            task_id = meta.get("task_id", "")
+
+            mem_item = c.get("memory_item")
+            task_desc = ""
+            try:
+                task_desc = str(getattr(mem_item, "memory", "") or "")
+            except Exception:
+                task_desc = ""
+
+            content = self._coerce_bcb_memory_content(
+                raw_content=str(raw_content or ""),
+                outcome=str(outcome or ""),
+                task_description=task_desc,
+            )
+            if not content:
+                continue
+
+            if len(content) > self._budget // len(candidates):
+                content = content[: self._budget // len(candidates)] + "..."
+
+            parts.append(f"## Example {i} [{str(outcome).upper()}]")
+            if task_id:
+                parts.append(f"Task: {task_id}")
+            parts.append(str(content))
+            parts.append("")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _coerce_bcb_memory_content(*, raw_content: str, outcome: str, task_description: str) -> str:
+        text = str(raw_content or "").strip()
+        if not text:
+            return ""
+        if "[MEMORY TYPE]" in text.upper():
+            return text
+
+        out = str(outcome or "unknown").strip().lower()
+        is_failure = out in {"failure", "fail", "failed", "0", "false", "no"}
+        if is_failure:
+            # Prefer a line that begins with "Reflection:"; avoid matching "TASK REFLECTION:" header.
+            m = re.search(r"(?is)(?:^|\n)reflection\s*:\s*(.*)$", text)
+            reflection = (m.group(1) if m else text).strip()
+            td = task_description.strip() if task_description else ""
+            return (
+                "[MEMORY TYPE] FAILURE_REFLECTION\n"
+                "[TASK]\n"
+                f"{td}\n\n"
+                "[REFLECTION]\n"
+                f"{reflection}"
+            ).strip()
+
+        body = text
+        m = re.match(r"(?is)^task\\s*:\\s*.*?\\n\\n(.*)$", text)
+        if m:
+            body = (m.group(1) or "").strip()
+        td = task_description.strip() if task_description else ""
+        return (
+            "[MEMORY TYPE] SUCCESS_PROCEDURE\n"
+            "[TASK]\n"
+            f"{td}\n\n"
+            "[EXECUTION TRAJECTORY]\n"
+            f"{body}"
+        ).strip()
 
     def _get_retrieve_threshold(self) -> float:
         """Align with other benchmarks: use mem_service.rl_config.sim_threshold (fallback tau)."""

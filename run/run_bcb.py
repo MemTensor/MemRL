@@ -70,6 +70,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train_ratio", type=float, default=0.7)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--retrieve_threshold",
+        type=float,
+        default=None,
+        help=(
+            "BCB similarity threshold for MemoryService.retrieve(...). "
+            "If omitted, falls back to rl_config.sim_threshold (or rl_config.tau)."
+        ),
+    )
+    p.add_argument(
+        "--memory_budget_tokens",
+        type=int,
+        default=None,
+        help="Token budget for injected memory context (rough per-entry char budget).",
+    )
+    p.add_argument(
         "--split_file",
         type=str,
         default=None,
@@ -232,6 +247,12 @@ def main() -> None:
             args.max_tokens if args.max_tokens is not None else (cfg.llm.max_tokens or 1280)
         ),
         retrieve_k=(args.retrieve_k if args.retrieve_k is not None else cfg.memory.k_retrieve),
+        retrieve_threshold=args.retrieve_threshold,
+        memory_budget_tokens=(
+            int(args.memory_budget_tokens)
+            if args.memory_budget_tokens is not None
+            else 2000
+        ),
         bcb_repo=args.bcb_repo,
         untrusted_hard_timeout_s=float(args.untrusted_hard_timeout),
         eval_timeout_s=float(args.eval_timeout),

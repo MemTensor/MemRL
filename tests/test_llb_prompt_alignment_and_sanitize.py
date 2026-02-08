@@ -28,14 +28,14 @@ def _assert_imported(mod, name: str):
 
 def test_llb_prompt_modules_exist() -> None:
     # RED: these modules should exist after we align MemRL with memory_rl/dev/feat-mdp-llb.
-    _assert_imported(_opt_import("memp.lifelongbench_eval.prompts"), "memp.lifelongbench_eval.prompts")
-    _assert_imported(_opt_import("memp.lifelongbench_eval.sanitize"), "memp.lifelongbench_eval.sanitize")
-    _assert_imported(_opt_import("memp.lifelongbench_eval.memory_context"), "memp.lifelongbench_eval.memory_context")
+    _assert_imported(_opt_import("memrl.lifelongbench_eval.prompts"), "memrl.lifelongbench_eval.prompts")
+    _assert_imported(_opt_import("memrl.lifelongbench_eval.sanitize"), "memrl.lifelongbench_eval.sanitize")
+    _assert_imported(_opt_import("memrl.lifelongbench_eval.memory_context"), "memrl.lifelongbench_eval.memory_context")
 
 
 def test_llb_system_prompt_is_task_consistent() -> None:
-    prompts = _opt_import("memp.lifelongbench_eval.prompts")
-    prompts = _assert_imported(prompts, "memp.lifelongbench_eval.prompts")
+    prompts = _opt_import("memrl.lifelongbench_eval.prompts")
+    prompts = _assert_imported(prompts, "memrl.lifelongbench_eval.prompts")
 
     db = prompts.build_llb_system_prompt(task="db_bench")
     os = prompts.build_llb_system_prompt(task="os_interaction")
@@ -53,8 +53,8 @@ def test_llb_system_prompt_is_task_consistent() -> None:
 
 
 def test_llb_memory_sanitizer_strips_env_preamble() -> None:
-    sanitize = _opt_import("memp.lifelongbench_eval.sanitize")
-    sanitize = _assert_imported(sanitize, "memp.lifelongbench_eval.sanitize")
+    sanitize = _opt_import("memrl.lifelongbench_eval.sanitize")
+    sanitize = _assert_imported(sanitize, "memrl.lifelongbench_eval.sanitize")
 
     raw = "\n".join(
         [
@@ -88,8 +88,8 @@ def test_llb_memory_sanitizer_strips_env_preamble() -> None:
 
 
 def test_llb_memory_context_no_env_preamble() -> None:
-    memory_context = _opt_import("memp.lifelongbench_eval.memory_context")
-    memory_context = _assert_imported(memory_context, "memp.lifelongbench_eval.memory_context")
+    memory_context = _opt_import("memrl.lifelongbench_eval.memory_context")
+    memory_context = _assert_imported(memory_context, "memrl.lifelongbench_eval.memory_context")
 
     blob = "\n".join(
         [
@@ -110,10 +110,10 @@ def test_llb_memory_context_no_env_preamble() -> None:
 
 
 def test_llb_prompt_order_system_before_memory_and_constraints_last() -> None:
-    prompts = _opt_import("memp.lifelongbench_eval.prompts")
-    memory_context = _opt_import("memp.lifelongbench_eval.memory_context")
-    prompts = _assert_imported(prompts, "memp.lifelongbench_eval.prompts")
-    memory_context = _assert_imported(memory_context, "memp.lifelongbench_eval.memory_context")
+    prompts = _opt_import("memrl.lifelongbench_eval.prompts")
+    memory_context = _opt_import("memrl.lifelongbench_eval.memory_context")
+    prompts = _assert_imported(prompts, "memrl.lifelongbench_eval.prompts")
+    memory_context = _assert_imported(memory_context, "memrl.lifelongbench_eval.memory_context")
 
     ctx = memory_context.format_llb_memory_context(
         {"successed": [{"metadata": {}, "content": "assistant: ok"}]},

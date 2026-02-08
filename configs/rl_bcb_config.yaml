@@ -1,7 +1,7 @@
 # Full config for running BigCodeBench (BCB) with MemRL in this repo.
 #
 # IMPORTANT:
-# - This YAML must match `memp.configs.config.MempConfig` (extra fields are forbidden).
+# - This YAML must match `memrl.configs.config.MempConfig` (extra fields are forbidden).
 # - BCB-specific knobs (subset/split/epochs/train_ratio/split_file/data_path/...) are CLI args
 #   to `run/run_bcb.py` and are intentionally NOT in this YAML.
 # - You must replace llm.api_key / embedding.api_key before running.
@@ -112,4 +112,3 @@ rl_config:
   q_min_threshold: -0.8
   weight_sim: 0.5
   weight_q: 0.5
-

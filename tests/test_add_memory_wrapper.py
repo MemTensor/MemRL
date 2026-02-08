@@ -5,7 +5,7 @@ import unittest
 class TestAddMemoryWrapper(unittest.TestCase):
     def test_add_memory_delegates_to_add_memories_and_returns_first_mem_id(self):
         # Import inside test to ensure it uses the activated conda env deps (memos, etc).
-        from memp.service.memory_service import MemoryService
+        from memrl.service.memory_service import MemoryService
 
         svc = MemoryService.__new__(MemoryService)  # bypass heavy __init__
 
@@ -50,7 +50,7 @@ class TestAddMemoryWrapper(unittest.TestCase):
         self.assertEqual(captured["metadatas"], [{"source_benchmark": "X"}])
 
     def test_add_memory_allows_metadata_none(self):
-        from memp.service.memory_service import MemoryService
+        from memrl.service.memory_service import MemoryService
 
         svc = MemoryService.__new__(MemoryService)
 

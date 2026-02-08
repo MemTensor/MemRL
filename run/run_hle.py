@@ -9,12 +9,12 @@ import time
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from memp.configs.config import MempConfig
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
-from memp.service.memory_service import MemoryService
-from memp.service.strategies import BuildStrategy, RetrieveStrategy, UpdateStrategy, StrategyConfiguration
-from memp.run.hle_runner import HLERunner, HLESelection
+from memrl.configs.config import MempConfig
+from memrl.providers.llm import OpenAILLM
+from memrl.providers.embedding import OpenAIEmbedder
+from memrl.service.memory_service import MemoryService
+from memrl.service.strategies import BuildStrategy, RetrieveStrategy, UpdateStrategy, StrategyConfiguration
+from memrl.run.hle_runner import HLERunner, HLESelection
 
 
 def setup_logging(project_root: Path, name: str):

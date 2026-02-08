@@ -1,4 +1,4 @@
-# memp/run/alfworld_runner.py
+# memrl/run/alfworld_rl_runner.py
 import logging
 from pathlib import Path
 from typing import Dict, Set, Any
@@ -20,12 +20,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 from tqdm import tqdm
 from .base_runner import BaseRunner
-from memp.envs.alfworld_env import AlfWorldEnv
-from memp.agent.memp_agent import MempAgent
-from memp.agent.history import EpisodeHistory
-from memp.service.memory_service import MemoryService
-from alfworld.agents.environment.alfred_tw_env import AlfredTWEnv, AlfredDemangler, AlfredInfos, AlfredExpert
-from memp.service.value_driven import RLConfig
+from memrl.envs.alfworld_env import AlfWorldEnv
+from memrl.agent.memp_agent import MempAgent
+from memrl.agent.history import EpisodeHistory
+from memrl.service.memory_service import MemoryService
+from memrl.service.value_driven import RLConfig
 
 MAX_RETRIES = 4 
 RETRY_DELAY = 2  
@@ -83,7 +82,19 @@ class AlfworldRunner(BaseRunner):
         self.rl_config: Optional[RLConfig] = rl_config
 
         # --- [Dataset] Initialize game files ---
-        env_controller = AlfredTWEnv(self.env_config, train_eval='train')
+        try:
+            from alfworld.agents.environment.alfred_tw_env import (  # type: ignore
+                AlfredTWEnv,
+                AlfredDemangler,
+                AlfredInfos,
+                AlfredExpert,
+            )
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                "ALFWorld is not installed. Install ALFWorld dependencies to run the ALFWorld benchmark."
+            ) from e
+
+        env_controller = AlfredTWEnv(self.env_config, train_eval="train")
         all_train_game_files = env_controller.game_files
 
         if not 0.0 < self.dataset_ratio <= 1.0:

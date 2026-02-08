@@ -15,8 +15,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from .base_runner import BaseRunner
-from memp.providers.llm import OpenAILLM
-from memp.service.memory_service import MemoryService
+from memrl.providers.llm import OpenAILLM
+from memrl.service.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 

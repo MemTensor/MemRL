@@ -1,6 +1,6 @@
-# memp.mem0_core 模块说明
+# memrl.mem0_core 模块说明
 
-本模块是一个**与 MemOS / `memp.service` 解耦的 mem0 集成层**，用来在本项目中实现基于 mem0 的记忆基线（baseline）。
+本模块是一个**与 MemOS / `memrl.service` 解耦的 mem0 集成层**，用来在本项目中实现基于 mem0 的记忆基线（baseline）。
 它不依赖 `MemoryService`，后续所有基于 mem0 的实验都应通过这里暴露的接口完成。
 
 目标场景：
@@ -20,7 +20,7 @@
 
 ### 1. `Mem0Config`
 
-文件：`memp/mem0_core/config.py`
+文件：`memrl/mem0_core/config.py`
 
 作用：描述本仓库内部使用 mem0 的最小配置。
 
@@ -37,7 +37,7 @@
 
 ### 2. `Mem0Client`
 
-文件：`memp/mem0_core/client.py`
+文件：`memrl/mem0_core/client.py`
 
 作用：对 `mem0` Python SDK 的轻量封装。
 
@@ -73,7 +73,7 @@ mem0 OSS 默认使用本地 Qdrant 作为向量存储，且会在 `mem0_dir` 下
      ```
 
      其中：
-     - `<repo_root>` 为当前仓库根目录（`memp/mem0_core` 往上两级）；
+     - `<repo_root>` 为当前仓库根目录（`memrl/mem0_core` 往上两级）；
      - `<pid>` 为当前进程号。
 
    - 这样，每个进程自己的 `migrations_qdrant` 路径互不干扰，再同时跑多个进程时不会因为
@@ -120,8 +120,8 @@ mem0 OSS 默认使用本地 Qdrant 作为向量存储，且会在 `mem0_dir` 下
 
 4. 与 BigCodeBench / LifelongBench 的关系
 
-   - BigCodeBench mem0 模式（`memp.bigcodebench_eval.runner.BCBRunner.run_mem0`）和
-     LifelongBench mem0 模式（`memp.lifelongbench_eval.runner.LLBRunner.run_mem0`）都统一通过
+   - BigCodeBench mem0 模式（`memrl.bigcodebench_eval.runner.BCBRunner.run_mem0`）和
+     LifelongBench mem0 模式（`memrl.lifelongbench_eval.runner.LLBRunner.run_mem0`）都统一通过
      `Mem0Client` / `Mem0Store` 初始化 mem0；
    - 因此它们共享同一套“按 `user_id` 分库”的存储逻辑：
      - BCB：不同 split/subset 使用不同 `user_id`，同一 run 的 train/val 在同一个进程内完成；
@@ -136,7 +136,7 @@ mem0 OSS 默认使用本地 Qdrant 作为向量存储，且会在 `mem0_dir` 下
 
 ### 3. `Experience` 与 `RetrievedMemory`
 
-文件：`memp/mem0_core/types.py`
+文件：`memrl/mem0_core/types.py`
 
 #### `Experience`
 
@@ -168,7 +168,7 @@ Adaptors（如 BigCodeBench / LifelongBench 的 mem0 适配层）负责构造 `E
 
 ## 4. `Mem0Store`
 
-文件：`memp/mem0_core/store.py`
+文件：`memrl/mem0_core/store.py`
 
 作用：以 `Experience` 为中心的高层 API，是 benchmark 使用 mem0 的主要入口。
 
@@ -240,7 +240,7 @@ benchmark 适配层可以直接把这些 payload 写成 JSONL，以便后续分�
 
 ## 5. `format_memories_for_llm`
 
-文件：`memp/mem0_core/formatting.py`
+文件：`memrl/mem0_core/formatting.py`
 
 作用：将 `RetrievedMemory` 列表格式化成可注入 LLM 的上下文字符串。
 
@@ -281,7 +281,7 @@ format_memories_for_llm(
 ### BigCodeBench 侧（示意）
 
 ```python
-from memp.mem0_core import Mem0Config, Mem0Store, Experience, format_memories_for_llm
+from memrl.mem0_core import Mem0Config, Mem0Store, Experience, format_memories_for_llm
 
 cfg = Mem0Config(
     mode="oss",
@@ -342,6 +342,6 @@ mem_ctx = format_memories_for_llm(mems, budget_tokens=summary_tokens)
 
 后续在 BigCodeBench / LifelongBench 的具体集成中：
 - 只需要围绕 `Experience` / `Mem0Store` / `format_memories_for_llm` 做适配；
-- 所有 mem0 相关的 SDK 调用、版本差异和基础日志，都统一收敛在 `memp.mem0_core` 这一层。  
+- 所有 mem0 相关的 SDK 调用、版本差异和基础日志，都统一收敛在 `memrl.mem0_core` 这一层。  
 
 如果你在集成过程中发现 core 层不够用（例如需要额外的过滤字段或日志字段），可以在这里扩展接口，而不触碰 benchmark 具体逻辑。 

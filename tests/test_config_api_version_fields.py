@@ -1,5 +1,5 @@
 def test_llmconfig_has_api_version_field():
-    from memp.configs.config import LLMConfig
+    from memrl.configs.config import LLMConfig
 
     cfg = LLMConfig()
     # run/run_llb.py expects this attribute to exist (may be None).
@@ -7,7 +7,7 @@ def test_llmconfig_has_api_version_field():
 
 
 def test_embeddingconfig_has_api_version_field():
-    from memp.configs.config import EmbeddingConfig
+    from memrl.configs.config import EmbeddingConfig
 
     cfg = EmbeddingConfig()
     # run/run_llb.py expects this attribute to exist (may be None).
@@ -15,7 +15,7 @@ def test_embeddingconfig_has_api_version_field():
 
 
 def test_memoryconfig_has_checkpoint_fields():
-    from memp.configs.config import MemoryConfig
+    from memrl.configs.config import MemoryConfig
 
     cfg = MemoryConfig()
     # run/run_llb.py expects these attributes to exist (may be unset).

@@ -24,18 +24,18 @@ except Exception:  # pragma: no cover - optional dependency
 import contextlib
 
 from .base_runner import BaseRunner
-from memp.service.memory_service import MemoryService
-from memp.service.value_driven import RLConfig
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
-from memp.utils.task_id import extract_task_id
+from memrl.service.memory_service import MemoryService
+from memrl.service.value_driven import RLConfig
+from memrl.providers.llm import OpenAILLM
+from memrl.providers.embedding import OpenAIEmbedder
+from memrl.utils.task_id import extract_task_id
 
-from memp.lifelongbench_eval.prompts import (
+from memrl.lifelongbench_eval.prompts import (
     DEFAULT_SYSTEM_PROMPT as LLB_DEFAULT_SYSTEM_PROMPT,
     build_llb_prompt_with_memory,
     build_llb_system_prompt,
 )
-from memp.lifelongbench_eval.memory_context import format_llb_memory_context
+from memrl.lifelongbench_eval.memory_context import format_llb_memory_context
 
 # --- Setup LLB Path ---
 # 动态查找项目根目录和 LLB 路径
@@ -166,13 +166,13 @@ class LLBRunner(BaseRunner):
         self.rl_config: Optional[RLConfig] = rl_config
 
         # Optional per-task JSONL tracing (activated via TRACE_JSONL_PATH).
-        from memp.trace.llb_jsonl import LLBJsonlTracer
-        from memp.trace.tracing_llm import TracingLLMProvider
+        from memrl.trace.llb_jsonl import LLBJsonlTracer
+        from memrl.trace.tracing_llm import TracingLLMProvider
 
         self._trace = LLBJsonlTracer.from_env()
 
         # Create LLM adapter for LLB LanguageModelAgent (optionally wrapped for tracing)
-        from memp.lifelongbench_eval.lm_adapter import MempOpenAIAdapter
+        from memrl.lifelongbench_eval.lm_adapter import MempOpenAIAdapter
 
         provider_for_adapter = self.llm_provider
         if self._trace is not None:
@@ -276,7 +276,7 @@ class LLBRunner(BaseRunner):
 
     def _build_llb_task(self):
         """Build LLB task object and load dataset."""
-        from memp.lifelongbench_eval.task_wrappers import (
+        from memrl.lifelongbench_eval.task_wrappers import (
             build_task,
             ensure_standard_prompts,
         )
@@ -612,7 +612,7 @@ class LLBRunner(BaseRunner):
                             memory_context = self._format_memory_context(processed_mems)
 
                         if trace_ctx is not None:
-                            from memp.trace.llb_jsonl import summarize_text
+                            from memrl.trace.llb_jsonl import summarize_text
 
                             def _mem_summary(m: Dict[str, Any]) -> Dict[str, Any]:
                                 md = m.get("metadata")
@@ -693,7 +693,7 @@ class LLBRunner(BaseRunner):
                 )
 
                 # Create new task instance for this sample (avoid state pollution)
-                from memp.lifelongbench_eval.task_wrappers import build_task
+                from memrl.lifelongbench_eval.task_wrappers import build_task
 
                 task_obj, _ = build_task(
                     task=self.task,

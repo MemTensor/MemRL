@@ -11,13 +11,13 @@ import time
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from memp.configs.config import MempConfig
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
-from memp.service.memory_service import MemoryService
-from memp.service.strategies import BuildStrategy, RetrieveStrategy, UpdateStrategy, StrategyConfiguration
-from memp.agent.memp_agent import MempAgent
-from memp.run.alfworld_rl_runner import AlfworldRunner
+from memrl.configs.config import MempConfig
+from memrl.providers.llm import OpenAILLM
+from memrl.providers.embedding import OpenAIEmbedder
+from memrl.service.memory_service import MemoryService
+from memrl.service.strategies import BuildStrategy, RetrieveStrategy, UpdateStrategy, StrategyConfiguration
+from memrl.agent.memp_agent import MempAgent
+from memrl.run.alfworld_rl_runner import AlfworldRunner
 
 
 def setup_logging(project_root: Path, name: str):

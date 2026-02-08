@@ -18,17 +18,17 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
-
+os.environ["MEM0_TELEMETRY"] = "False"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(REPO_ROOT))
 
-from memp.configs.config import MempConfig
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
+from memrl.configs.config import MempConfig
+from memrl.providers.llm import OpenAILLM
 
-from memp.selfrag_core import SelfRAGConfig, SelfRAGStore, SelfRAGClient, SelfRAGExperience
-from memp.selfrag_core.types import RetrievedCandidate
+from memrl.mem0_core.config import Mem0Config
+from memrl.mem0_core.store import Mem0Store
+from memrl.mem0_core.types import Experience, RetrievedMemory
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -45,7 +45,7 @@ class HLESelection:
     category_ratio: Optional[float] = None
 
 
-class HLESelfRAGBench:
+class HLEMem0Bench:
     def __init__(
         self,
         name: str,
@@ -53,8 +53,7 @@ class HLESelfRAGBench:
         llm_judge: Optional[OpenAILLM],
         selection: HLESelection,
         output_dir: Path,
-        selfrag_store: SelfRAGStore,
-        selfrag_client: SelfRAGClient,
+        mem0_store: Mem0Store,
         run_id: Optional[str] = None,
         temperature: float = 0.0,
         max_tokens: int = 512,
@@ -75,8 +74,7 @@ class HLESelfRAGBench:
         self.llm_judge = llm_judge
         self.sel = selection
         self.output_dir = Path(output_dir)
-        self.selfrag_store = selfrag_store
-        self.selfrag_client = selfrag_client
+        self.mem0_store = mem0_store
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.retrieve_k = max(0, int(retrieve_k))
@@ -92,12 +90,14 @@ class HLESelfRAGBench:
         self.ckpt_resume_epoch = ckpt_resume_epoch
 
         self.run_id = run_id or time.strftime('%Y%m%d-%H%M%S')
-        self.ck_dir = self.output_dir / "hle_selfrag" / f"exp_{self.name}_{self.run_id}"
+        self.ck_dir = self.output_dir / "hle_mem0" / f"exp_{self.name}_{self.run_id}"
         self.log_dir = self.ck_dir / "local_cache"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.llm_log_path = self.log_dir / "llm_calls.jsonl"
-        self.selfrag_log_path = self.log_dir / "selfrag_events.jsonl"
+        self.mem0_log_path = self.log_dir / "mem0_calls.jsonl"
+        self.timing_log_path = self.log_dir / "timing.jsonl"
         self._log_lock = threading.Lock()
+        self._timing_lock = threading.Lock()
         self._image_lock = threading.Lock()
         self._image_store: Dict[str, str] = {}
         self._image_hash_to_id: Dict[str, str] = {}
@@ -172,14 +172,14 @@ class HLESelfRAGBench:
         if not resume_dir:
             return 1
         logger.info("Resuming from ckpt: %s", resume_dir)
-        self.selfrag_store.load_checkpoint_snapshot(str(resume_dir), local_cache_dir=str(self.log_dir))
+        self.mem0_store.load_checkpoint_snapshot(str(resume_dir), local_cache_dir=str(self.log_dir))
         self._load_image_cache()
         self._load_cum_state()
         return int(self.ckpt_resume_epoch) + 1
 
     def _eval_ckpt_sequence(self, valid_df: pd.DataFrame) -> None:
-        if not self.selfrag_store:
-            raise RuntimeError("selfrag_store is required for ckpt evaluation")
+        if not self.mem0_store:
+            raise RuntimeError("mem0_store is required for ckpt evaluation")
         if not self.ckpt_eval_path:
             raise ValueError("ckpt_eval_path is not set")
         ckpt_root = Path(self.ckpt_eval_path)
@@ -188,14 +188,14 @@ class HLESelfRAGBench:
             raise ValueError(f"No checkpoint folders found under {ckpt_root}")
         for idx, ckpt_dir in enumerate(ckpt_dirs, start=1):
             logger.info("Loading ckpt %s (%d/%d) for eval", ckpt_dir, idx, len(ckpt_dirs))
-            self.selfrag_store.load_checkpoint_snapshot(str(ckpt_dir), local_cache_dir=str(self.log_dir))
+            self.mem0_store.load_checkpoint_snapshot(str(ckpt_dir), local_cache_dir=str(self.log_dir))
             self._load_image_cache()
             self._eval_split(valid_df, tag=f"valid_ckpt_{idx}", step=idx, cum_key="valid", total=len(valid_df))
 
     def _save_ckpt(self, sec_idx: int) -> None:
         try:
             self._persist_cum_state()
-            meta = self.selfrag_store.save_checkpoint_snapshot(
+            meta = self.mem0_store.save_checkpoint_snapshot(
                 str(self.ck_dir),
                 ckpt_id=sec_idx,
                 local_cache_dir=str(self.log_dir),
@@ -245,14 +245,14 @@ class HLESelfRAGBench:
         cum_acc = len(seen) / max(1, total)
         return cum_acc, len(seen)
 
-    def _log_selfrag_event(self, event: str, payload: Dict[str, Any]) -> None:
+    def _log_mem0_event(self, event: str, payload: Dict[str, Any]) -> None:
         entry = {"ts": time.strftime('%Y-%m-%dT%H:%M:%S'), "event": event, **payload}
         try:
             text = json.dumps(entry, ensure_ascii=False, default=str)
         except Exception:
             text = json.dumps({"ts": entry.get("ts"), "event": event, "payload": str(payload)}, ensure_ascii=False)
         with self._log_lock:
-            with open(self.selfrag_log_path, "a", encoding="utf-8") as f:
+            with open(self.mem0_log_path, "a", encoding="utf-8") as f:
                 f.write(text + "\n")
 
     def _log_llm_call(self, call_type: str, messages: Any, response: Any, meta: Optional[Dict[str, Any]] = None) -> None:
@@ -271,6 +271,26 @@ class HLESelfRAGBench:
         with self._log_lock:
             with open(self.llm_log_path, "a", encoding="utf-8") as f:
                 f.write(payload + "\n")
+
+    def _log_timing(self, event: str, elapsed: float, meta: Optional[Dict[str, Any]] = None) -> None:
+        """Append lightweight timing stats to a JSONL file for profiling."""
+        rec = {
+            "ts": time.strftime('%Y-%m-%dT%H:%M:%S'),
+            "event": event,
+            "elapsed_sec": round(float(elapsed), 3),
+        }
+        if meta:
+            rec.update(meta)
+        try:
+            text = json.dumps(rec, ensure_ascii=False, default=str)
+        except Exception:
+            text = json.dumps({"event": event, "elapsed_sec": float(elapsed), "meta": str(meta)}, ensure_ascii=False)
+        try:
+            with self._timing_lock:
+                with open(self.timing_log_path, "a", encoding="utf-8") as f:
+                    f.write(text + "\n")
+        except Exception:
+            logger.debug("Failed to log timing event", exc_info=True)
 
     def _apply_dataset_ratio(self, df: pd.DataFrame) -> pd.DataFrame:
         ratio = getattr(self, "dataset_ratio", 1.0)
@@ -408,7 +428,7 @@ class HLESelfRAGBench:
         except Exception:
             logger.debug("Failed to load image cache", exc_info=True)
 
-    def _extract_mem_image_ids(self, mem: RetrievedCandidate) -> List[str]:
+    def _extract_mem_image_ids(self, mem: RetrievedMemory) -> List[str]:
         ids = []
         md = mem.metadata or {}
         if isinstance(md, dict):
@@ -418,14 +438,14 @@ class HLESelfRAGBench:
         except Exception:
             return []
 
-    def _mem_success_flag(self, mem: RetrievedCandidate) -> bool:
+    def _mem_success_flag(self, mem: RetrievedMemory) -> bool:
         md = mem.metadata or {}
         if isinstance(md, dict):
             return bool(md.get("success"))
         return False
 
     def _build_memory_context(
-        self, selected_mems: List[RetrievedCandidate], limit: int
+        self, selected_mems: List[RetrievedMemory], limit: int
     ) -> Tuple[str, List[str], Set[str]]:
         if not selected_mems:
             return "", [], set()
@@ -434,7 +454,7 @@ class HLESelfRAGBench:
         succ_blocks, fail_blocks = [], []
         for m in selected_mems[: max(0, limit) or len(selected_mems)]:
             retrieved_ids.append(str(m.id))
-            content = m.text or ""
+            content = m.memory or ""
             img_ids = self._extract_mem_image_ids(m)
             if img_ids:
                 memory_image_ids.update(img_ids)
@@ -557,33 +577,20 @@ class HLESelfRAGBench:
         retrieved_ids: List[str] = []
         memory_image_ids: Set[str] = set()
         retrieved_topk = None
-        if self.selfrag_store and self.retrieve_k > 0:
+        row_start = time.time()
+        timings: Dict[str, float] = {}
+        if self.mem0_store and self.retrieve_k > 0:
             try:
                 tau = float(getattr(self, "tau", 0.0))
             except Exception:
                 tau = 0.0
-            candidates = self.selfrag_store.search(q, top_k=self.retrieve_k)
-            if tau:
-                candidates = [c for c in candidates if c.score >= tau]
-            retrieved_topk = [{"id": c.id, "score": c.score} for c in candidates]
-            selected: List[RetrievedCandidate] = []
-            if candidates:
-                decision = self.selfrag_client.decide(q, candidates)
-                selected_ids = {d.id for d in decision.docs if d.selected}
-                if not decision.should_retrieve:
-                    selected_ids = set()
-                selected = [c for c in candidates if c.id in selected_ids]
-                self._log_selfrag_event(
-                    "selfrag.retrieve_query",
-                    {
-                        "query_preview": q[:80],
-                        "candidates": len(candidates),
-                        "selected": len(selected),
-                        "should_retrieve": decision.should_retrieve,
-                    },
-                )
-            if selected:
-                memory_ctx, retrieved_ids, memory_image_ids = self._build_memory_context(selected, self.retrieve_k)
+            t_mem_start = time.time()
+            mems = self.mem0_store.search(q, limit=self.retrieve_k, threshold=tau)
+            timings["mem_search_sec"] = time.time() - t_mem_start
+            retrieved_topk = [{"id": m.id, "score": m.score} for m in mems]
+            t_ctx_start = time.time()
+            memory_ctx, retrieved_ids, memory_image_ids = self._build_memory_context(mems, self.retrieve_k)
+            timings["memory_ctx_build_sec"] = time.time() - t_ctx_start
 
         memory_images_info: List[Tuple[str, str, str]] = []
         if memory_image_ids:
@@ -602,11 +609,13 @@ class HLESelfRAGBench:
         call_meta = {"question_id": row.get("id", None), "answer_type": answer_type, "phase": phase}
         gen_error = None
         try:
+            t_llm_start = time.time()
             output = self.llm.generate(
                 messages,
                 temperature=self.temperature,
                 # max_tokens=self.max_tokens,
             )
+            timings["llm_generate_sec"] = time.time() - t_llm_start
         except Exception as e:
             logger.error("LLM error: %s", e)
             gen_error = str(e)
@@ -614,7 +623,23 @@ class HLESelfRAGBench:
         if gen_error:
             call_meta["error"] = gen_error
         self._log_llm_call("solution", messages, output, meta=call_meta)
+        t_judge_start = time.time()
         judge_res = self._hle_judge(q, gold, output or "", meta={"question_id": row.get("id", None)})
+        timings["judge_sec"] = time.time() - t_judge_start
+        timings["row_total_sec"] = time.time() - row_start
+        try:
+            self._log_timing(
+                "evaluate_row",
+                timings["row_total_sec"],
+                {
+                    "question_id": row.get("id", None),
+                    "phase": phase,
+                    "retrieved": len(retrieved_ids),
+                    **timings,
+                },
+            )
+        except Exception:
+            logger.debug("Failed to log timing for row", exc_info=True)
         correct = True if str(judge_res.get("correct", "no")).lower() == "yes" else False
 
         rec: Dict[str, Any] = {
@@ -673,7 +698,7 @@ class HLESelfRAGBench:
         acc = correct_so_far / max(1, len(results))
         elapsed = time.time() - start
         logger.info("[%s] Eval finished. Acc: %.2f%% | %d items | %.1fs", tag, acc * 100, total, elapsed)
-        out_dir = self.output_dir / "hle_selfrag"
+        out_dir = self.output_dir / "hle_mem0"
         out_dir.mkdir(parents=True, exist_ok=True)
         safe_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(tag))
         out_path = out_dir / f"hle_{safe_tag}_results_{time.strftime('%Y%m%d-%H%M%S')}.csv"
@@ -718,7 +743,7 @@ class HLESelfRAGBench:
 
             if batch_recs:
                 for rec in batch_recs:
-                    exp = SelfRAGExperience(
+                    exp = Experience(
                         benchmark="HLE",
                         task_id=str(rec.get("id")),
                         phase="train",
@@ -731,9 +756,9 @@ class HLESelfRAGBench:
                         },
                     )
                     try:
-                        self.selfrag_store.add_experience(exp)
+                        self.mem0_store.add_experience(exp, infer=False)
                     except Exception as e:
-                        logger.warning("[train sec %d] selfrag add failed: %s", sec_idx, e)
+                        logger.warning("[train sec %d] mem0 add failed: %s", sec_idx, e)
 
         if not all_recs:
             return {"acc": 0.0}
@@ -742,7 +767,7 @@ class HLESelfRAGBench:
         total_count = self._cum_totals.get("train", len(df))
         cum_acc, cum_correct = self._update_cumulative("train", all_recs, total_count)
         logger.info("[train sec %d] Cumulative Acc: %.2f%% (%d/%d)", sec_idx, cum_acc * 100, cum_correct, total_count)
-        out_dir = self.output_dir / "hle_selfrag"
+        out_dir = self.output_dir / "hle_mem0"
         out_dir.mkdir(parents=True, exist_ok=True)
         safe_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"train_sec_{sec_idx}")
         out_path = out_dir / f"hle_{safe_tag}_results_{time.strftime('%Y%m%d-%H%M%S')}.csv"
@@ -762,6 +787,7 @@ class HLESelfRAGBench:
                 return
             self._eval_ckpt_sequence(valid_df)
             return
+
         start_sec = 1
         if self.ckpt_resume_enabled:
             start_sec = self._resume_from_ckpt()
@@ -788,7 +814,7 @@ class HLESelfRAGBench:
                     total=len(valid_df),
                 )
             if len(train_df) != 0:
-                    self._save_ckpt(sec_idx)
+                self._save_ckpt(sec_idx)
 
         try:
             with self._image_lock:
@@ -817,8 +843,8 @@ def _setup_logging(name: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run self-rag baseline on HLE")
-    parser.add_argument("--config", type=str, default=str(REPO_ROOT / "configs" / "selfrag_hle_config.yaml"))
+    parser = argparse.ArgumentParser(description="Run mem0 baseline on HLE")
+    parser.add_argument("--config", type=str, default=str(REPO_ROOT / "configs" / "mem0_hle_config.yaml"))
     parser.add_argument("--dataset", type=str, help="HLE parquet path", default="/mnt/public/code/zst/memory/hle/test-00000-of-00001-filtered.parquet")
     parser.add_argument("--num_valid", type=int, default=0)
     parser.add_argument("--num_train", type=int, default=0)
@@ -846,7 +872,7 @@ def main() -> None:
     out_dir = Path(cfg.experiment.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime('%Y%m%d-%H%M%S')
-    log_dir = out_dir / "hle_selfrag" / f"exp_{cfg.experiment.experiment_name}_{run_id}" / "local_cache"
+    log_dir = out_dir / "hle_mem0" / f"exp_{cfg.experiment.experiment_name}_{run_id}" / "local_cache"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     llm = OpenAILLM(
@@ -866,28 +892,38 @@ def main() -> None:
         token_log_dir=str(log_dir),
     ) if args.judge_model else None
 
-    embedder = OpenAIEmbedder(
-        api_key=cfg.embedding.api_key,
-        base_url=cfg.embedding.base_url,
-        model=cfg.embedding.model,
-        token_log_dir=str(log_dir),
-    )
-    selfrag_cfg = SelfRAGConfig(
-        user_id=f"selfrag_hle_{cfg.experiment.experiment_name}_{time.strftime('%Y%m%d-%H%M%S')}",
-        top_k=cfg.memory.k_retrieve,
-        retrieval_mode="adaptive",
-        embedding_cfg={
-            "model": cfg.embedding.model,
-            "base_url": cfg.embedding.base_url or "",
-        },
-    )
-    selfrag_store = SelfRAGStore(selfrag_cfg, embed_fn=embedder.embed, log_callback=None)
+    resume_user_id = None
+    if getattr(cfg.experiment, "ckpt_resume_enabled", False):
+        resume_path = getattr(cfg.experiment, "ckpt_resume_path", None)
+        resume_epoch = getattr(cfg.experiment, "ckpt_resume_epoch", None)
+        if resume_path and resume_epoch:
+            try:
+                root = Path(resume_path)
+                if (root / "snapshot").is_dir():
+                    candidate = root / "snapshot" / str(resume_epoch)
+                elif (root / str(resume_epoch)).is_dir():
+                    candidate = root / str(resume_epoch)
+                else:
+                    candidate = root
+                meta_path = candidate / "snapshot_meta.json"
+                if meta_path.is_file():
+                    with meta_path.open("r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    resume_user_id = meta.get("user_id")
+                    if resume_user_id:
+                        logger.info("Resume user_id loaded from %s: %s", meta_path, resume_user_id)
+            except Exception:
+                logger.warning("Failed to load resume user_id", exc_info=True)
 
-    def _generate(messages: List[Dict[str, str]]) -> str:
-        return llm.generate(messages)
-
-    selfrag_client = SelfRAGClient(selfrag_cfg, generate_fn=_generate, log_callback=None)
-    bench = HLESelfRAGBench(
+    user_id = resume_user_id or f"mem0_hle_{cfg.experiment.experiment_name}_{time.strftime('%Y%m%d-%H%M%S')}"
+    mem0_cfg = Mem0Config(
+        mode="oss",
+        user_id=user_id,
+        api_key=cfg.llm.api_key,
+        base_url=cfg.llm.base_url,
+    )
+    mem0_store = Mem0Store(mem0_cfg, log_callback=None)
+    bench = HLEMem0Bench(
         name=cfg.experiment.experiment_name,
         llm=llm,
         llm_judge=llm_judge,
@@ -899,8 +935,7 @@ def main() -> None:
             category_ratio=args.category_ratio if args.category_ratio is not None else getattr(cfg.experiment, "hle_category_ratio", None),
         ),
         output_dir=out_dir,
-        selfrag_store=selfrag_store,
-        selfrag_client=selfrag_client,
+        mem0_store=mem0_store,
         run_id=run_id,
         temperature=(args.temperature if args.temperature is not None else cfg.llm.temperature),
         max_tokens=(args.max_tokens if args.max_tokens is not None else (cfg.llm.max_tokens or 4096)),
@@ -916,8 +951,7 @@ def main() -> None:
         ckpt_resume_path=getattr(cfg.experiment, "ckpt_resume_path", None),
         ckpt_resume_epoch=getattr(cfg.experiment, "ckpt_resume_epoch", None),
     )
-    selfrag_store._log_callback = bench._log_selfrag_event
-    selfrag_client._log_callback = bench._log_selfrag_event
+    mem0_store._log_callback = bench._log_mem0_event
     bench.tau = float(getattr(cfg.rl_config, "tau", 0.0))
     bench.run()
 

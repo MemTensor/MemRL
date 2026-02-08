@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 
-from memp.service.memory_service import _resolve_snapshot_dirs
+from memrl.service.memory_service import _resolve_snapshot_dirs
 
 
 class TestResolveSnapshotDirs(unittest.TestCase):

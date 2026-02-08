@@ -84,7 +84,7 @@ class _DummyMemoryService:
 
 class TestBCBAlignment(unittest.TestCase):
     def test_bcb_runner_uses_retrieve_query_and_add_memories(self) -> None:
-        from memp.run.bcb_runner import BCBRunner, BCBSelection
+        from memrl.run.bcb_runner import BCBRunner, BCBSelection
 
         class _NoEvalRunner(BCBRunner):
             def _evaluate_one(self, *, task, code):
@@ -145,7 +145,7 @@ class TestBCBAlignment(unittest.TestCase):
         self.assertIn("Retrieved Memory Context", msgs[0]["content"])
 
     def test_bcb_runner_fallback_trajectory_when_raw_output_empty(self) -> None:
-        from memp.run.bcb_runner import BCBRunner, BCBSelection
+        from memrl.run.bcb_runner import BCBRunner, BCBSelection
 
         class _EmptyLLM:
             def __init__(self) -> None:

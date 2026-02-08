@@ -35,7 +35,7 @@ class TestRetrieversCompat(unittest.TestCase):
         return TextualMemoryItem(memory=mem, metadata=md)
 
     def test_format_memory_result_accepts_textual_item(self):
-        from memp.service import retrievers as r
+        from memrl.service import retrievers as r
 
         itm = self._make_item("q", "FULL")
 
@@ -47,7 +47,7 @@ class TestRetrieversCompat(unittest.TestCase):
 
     def test_query_retriever_falls_back_when_search_score_missing(self):
         # In some MemOS versions, MOS has no search_score; QueryRetriever must not crash.
-        from memp.service.retrievers import QueryRetriever
+        from memrl.service.retrievers import QueryRetriever
 
         itm = self._make_item("q", "FULL")
         mos = FakeMOSNoSearchScore(items=[itm])
@@ -63,7 +63,7 @@ class TestRetrieversCompat(unittest.TestCase):
         self.assertEqual(out2[0]["content"], "FULL")
 
     def test_query_retriever_uses_search_score_when_available(self):
-        from memp.service.retrievers import QueryRetriever
+        from memrl.service.retrievers import QueryRetriever
 
         itm = self._make_item("q", "FULL")
         mos = FakeMOS(hits=[{"item": itm, "score": 0.42}])
@@ -77,7 +77,7 @@ class TestRetrieversCompat(unittest.TestCase):
         self.assertEqual(out2, [])
 
     def test_random_retriever_accepts_textual_items(self):
-        from memp.service.retrievers import RandomRetriever
+        from memrl.service.retrievers import RandomRetriever
 
         itm1 = self._make_item("q1", "FULL1")
         itm2 = self._make_item("q2", "FULL2")

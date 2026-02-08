@@ -1,7 +1,7 @@
 import unittest
 
 
-from memp.service.memory_service import MemoryService
+from memrl.service.memory_service import MemoryService
 
 
 class _Dummy:

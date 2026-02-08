@@ -12,7 +12,7 @@ if str(_ROOT) not in sys.path:
 
 def test_config_rlconfig_has_sim_threshold_default() -> None:
     # Config-level RLConfig should expose sim_threshold so YAML/JSON config can set it.
-    from memp.configs.config import RLConfig
+    from memrl.configs.config import RLConfig
 
     cfg = RLConfig()
     assert hasattr(cfg, "sim_threshold")
@@ -20,12 +20,19 @@ def test_config_rlconfig_has_sim_threshold_default() -> None:
 
 
 def test_llb_runner_uses_sim_threshold_for_retrieve_query_threshold() -> None:
-    # Avoid importing memp.service.* in unit tests (may require external memos deps).
-    runner_path = _ROOT / "memp" / "run" / "llb_rl_runner.py"
+    # Avoid importing memrl.service.* in unit tests (may require external memos deps).
+    runner_path = _ROOT / "memrl" / "run" / "llb_rl_runner.py"
     txt = runner_path.read_text(encoding="utf-8")
 
     # Ensure retrieve_query threshold is driven by sim_threshold (with safe fallback).
-    # NOTE: keep the regex simple; we only care that the retrieve_query(...) call's
-    # threshold expression references `sim_threshold` (it may also include a fallback).
-    pattern = r"retrieve_query\([\s\S]*?threshold=[\s\S]*?sim_threshold"
-    assert re.search(pattern, txt) is not None
+    #
+    # The implementation may either pass the expression inline, or compute a local
+    # variable (e.g., `thr = ...`) and pass `threshold=thr`. We accept both forms.
+    has_sim_threshold_source = (
+        re.search(r"retrieve_query\([\s\S]*?threshold\s*=\s*[\s\S]*?sim_threshold", txt)
+        is not None
+    ) or (re.search(r"\bthr\s*=\s*[\s\S]*?sim_threshold", txt) is not None)
+    assert has_sim_threshold_source
+
+    # Sanity: retrieve_query must be called with a threshold argument.
+    assert re.search(r"retrieve_query\([\s\S]*?threshold\s*=", txt) is not None

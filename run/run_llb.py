@@ -45,18 +45,18 @@ if str(LLB_ROOT) not in sys.path:
     sys.path.insert(0, str(LLB_ROOT))
 
 # --- Import all our components ---
-from memp.configs.config import MempConfig
-from memp.service.memory_service import MemoryService
-from memp.service.strategies import (
+from memrl.configs.config import MempConfig
+from memrl.service.memory_service import MemoryService
+from memrl.service.strategies import (
     BuildStrategy,
     RetrieveStrategy,
     UpdateStrategy,
     StrategyConfiguration,
 )
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
-from memp.run.llb_rl_runner import LLBRunner
-from memp.trace.llb_jsonl import apply_trace_env_from_experiment_config
+from memrl.providers.llm import OpenAILLM
+from memrl.providers.embedding import OpenAIEmbedder
+from memrl.run.llb_rl_runner import LLBRunner
+from memrl.trace.llb_jsonl import apply_trace_env_from_experiment_config
 
 
 # (The setup_logging function remains the same)

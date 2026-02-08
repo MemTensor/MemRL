@@ -1,7 +1,7 @@
 """
 mem0 集成核心模块（mem0_core）。
 
-该包与 `memp.service` / MemOS 解耦，仅提供：
+该包与 `memrl.service` / MemOS 解耦，仅提供：
 - 基于 `mem0` Python SDK 的轻量客户端封装（本地 / 自托管）。
 - 跨 benchmark 统一的 Experience 抽象（一次任务 + 轨迹）。
 - 以 Experience 为中心的 Mem0Store（写入 / 检索 + 钩子式结构化日志）。

@@ -1,4 +1,3 @@
-from alfworld.agents.environment import get_environment
 import logging
 import os
 from .base import IEnv
@@ -6,6 +5,14 @@ import yaml
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ALFWorld is an optional dependency. Import lazily so that users can run
+# non-ALFWorld benchmarks without installing it.
+try:
+    from alfworld.agents.environment import get_environment  # type: ignore
+except ModuleNotFoundError as _e:
+    get_environment = None  # type: ignore[assignment]
+    _ALFWORLD_IMPORT_ERROR = _e
 
 def load_config_from_path(config_path: str, params=None):
     assert os.path.exists(config_path), f"Invalid config file: {config_path}"
@@ -46,6 +53,10 @@ class AlfWorldEnv(IEnv):
             self.env = preconfigured_env
         else:
             # Otherwise, create a default environment that samples from the whole split.
+            if get_environment is None:
+                raise ModuleNotFoundError(
+                    "ALFWorld is not installed. Install ALFWorld dependencies to run the ALFWorld benchmark."
+                ) from _ALFWORLD_IMPORT_ERROR
             config = load_config_from_path(config_path)
             env_type = config['env']['type']
             underlying_env_controller = get_environment(env_type)(config, train_eval=task_type)

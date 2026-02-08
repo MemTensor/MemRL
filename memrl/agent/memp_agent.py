@@ -8,7 +8,7 @@ import ast
 from .base import BaseAgent
 from .history import EpisodeHistory
 from . import prompts
-from memp.providers.llm import OpenAILLM
+from memrl.providers.llm import OpenAILLM
 
 logger = logging.getLogger(__name__)
 

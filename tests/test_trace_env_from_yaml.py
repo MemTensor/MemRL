@@ -2,8 +2,8 @@ import os
 
 
 def test_apply_trace_env_from_experiment_config_sets_env(monkeypatch):
-    from memp.configs.config import ExperimentConfig
-    from memp.trace.llb_jsonl import apply_trace_env_from_experiment_config
+    from memrl.configs.config import ExperimentConfig
+    from memrl.trace.llb_jsonl import apply_trace_env_from_experiment_config
 
     monkeypatch.delenv("TRACE_JSONL_PATH", raising=False)
     monkeypatch.delenv("TRACE_SAMPLE_FILTER", raising=False)
@@ -22,8 +22,8 @@ def test_apply_trace_env_from_experiment_config_sets_env(monkeypatch):
 def test_apply_trace_env_from_experiment_config_does_not_override_existing_env(
     monkeypatch,
 ):
-    from memp.configs.config import ExperimentConfig
-    from memp.trace.llb_jsonl import apply_trace_env_from_experiment_config
+    from memrl.configs.config import ExperimentConfig
+    from memrl.trace.llb_jsonl import apply_trace_env_from_experiment_config
 
     monkeypatch.setenv("TRACE_JSONL_PATH", "already.jsonl")
     monkeypatch.setenv("TRACE_SAMPLE_FILTER", "abc")
@@ -43,8 +43,8 @@ def test_apply_trace_env_from_experiment_config_does_not_override_existing_env(
 def test_apply_trace_env_from_experiment_config_can_unset_env_when_yaml_is_null(
     monkeypatch,
 ):
-    from memp.configs.config import ExperimentConfig
-    from memp.trace.llb_jsonl import apply_trace_env_from_experiment_config
+    from memrl.configs.config import ExperimentConfig
+    from memrl.trace.llb_jsonl import apply_trace_env_from_experiment_config
 
     monkeypatch.setenv("TRACE_JSONL_PATH", "already.jsonl")
     monkeypatch.setenv("TRACE_SAMPLE_FILTER", "abc")

@@ -1,8 +1,8 @@
 import unittest
 
 
-from memp.service.memory_service import MemoryService
-from memp.service.value_driven import RLConfig
+from memrl.service.memory_service import MemoryService
+from memrl.service.value_driven import RLConfig
 
 
 class TestAddMemoriesQInit(unittest.TestCase):

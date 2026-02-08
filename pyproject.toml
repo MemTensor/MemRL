@@ -1,7 +1,7 @@
 [project]
-name = "memp"
+name = "memrl"
 version = "0.1.0"
-description = "Procedural Memory Implementation for Agent Learning"
+description = "MemRL: Self-evolving agents via runtime reinforcement learning on episodic memory"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -12,7 +12,7 @@ keywords = [
     "memory",
     "agent",
     "procedural-memory",
-    "memp",
+    "memrl",
     "ai",
     "llm"
 ]
@@ -51,13 +51,13 @@ dev = [
 ]
 
 [project.scripts]
-memp = "memp.cli.main:cli"
+memrl = "memrl.cli.main:cli"
 
 [project.urls]
-Homepage = "https://github.com/memp-team/memp"
-Repository = "https://github.com/memp-team/memp.git"
-Documentation = "https://memp-team.github.io/memp"
-"Bug Tracker" = "https://github.com/memp-team/memp/issues"
+Homepage = "https://github.com/MemTensor/MemRL"
+Repository = "https://github.com/MemTensor/MemRL.git"
+Documentation = "https://github.com/MemTensor/MemRL"
+"Bug Tracker" = "https://github.com/MemTensor/MemRL/issues"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -65,13 +65,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["memp*"]
+include = ["memrl*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = [
-    "--cov=memp",
+    "--cov=memrl",
     "--cov-report=term-missing",
     "--cov-report=html",
     "-v"

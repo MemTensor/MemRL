@@ -16,14 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from memp.configs.config import MempConfig
-from memp.providers.llm import OpenAILLM
-from memp.agent.memp_agent import MempAgent
-from memp.run.alfworld_rl_runner import AlfworldRunner
+from memrl.configs.config import MempConfig
+from memrl.providers.llm import OpenAILLM
+from memrl.agent.memp_agent import MempAgent
+from memrl.run.alfworld_rl_runner import AlfworldRunner
 
-from memp.mem0_core.config import Mem0Config
-from memp.mem0_core.store import Mem0Store
-from memp.mem0_core.types import Experience, RetrievedMemory
+from memrl.mem0_core.config import Mem0Config
+from memrl.mem0_core.store import Mem0Store
+from memrl.mem0_core.types import Experience, RetrievedMemory
 
 logger = logging.getLogger(__name__)
 

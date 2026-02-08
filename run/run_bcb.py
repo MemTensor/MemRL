@@ -10,17 +10,17 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from memp.configs.config import MempConfig
-from memp.providers.llm import OpenAILLM
-from memp.providers.embedding import OpenAIEmbedder
-from memp.service.memory_service import MemoryService
-from memp.service.strategies import (
+from memrl.configs.config import MempConfig
+from memrl.providers.llm import OpenAILLM
+from memrl.providers.embedding import OpenAIEmbedder
+from memrl.service.memory_service import MemoryService
+from memrl.service.strategies import (
     BuildStrategy,
     RetrieveStrategy,
     UpdateStrategy,
     StrategyConfiguration,
 )
-from memp.run.bcb_runner import BCBRunner, BCBSelection
+from memrl.run.bcb_runner import BCBRunner, BCBSelection
 
 DEFAULT_SPLIT_FILES = {
     "hard": project_root / "configs" / "bigcodebench" / "splits" / "hard_seed42.json",

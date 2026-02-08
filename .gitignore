@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+*.egg-info/
 
 ## IDE / editor
 .vscode/
@@ -36,6 +37,9 @@ tests/test_llb_task_id_dedup.py
 tests/test_llb_trace_json_output.py
 tests/test_llb_zscore_toggle.py
 tests/test_task_id_extraction.py
+
+## Internal notes (do not publish)
+docs/plans/
 .claude/
 .codex/
 openspec/

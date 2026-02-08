@@ -4,8 +4,8 @@ from pathlib import Path
 
 def test_llb_jsonl_tracer_writes_one_line_per_task(tmp_path: Path):
     # Import should succeed after implementation.
-    from memp.trace.llb_jsonl import LLBJsonlTracer
-    from memp.trace.tracing_llm import TracingLLMProvider
+    from memrl.trace.llb_jsonl import LLBJsonlTracer
+    from memrl.trace.tracing_llm import TracingLLMProvider
 
     out = tmp_path / "trace.jsonl"
     tracer = LLBJsonlTracer(path=out, sample_filter="1")
@@ -38,7 +38,7 @@ def test_llb_jsonl_tracer_writes_one_line_per_task(tmp_path: Path):
 
 
 def test_llb_jsonl_tracer_sample_filter_limit(tmp_path: Path):
-    from memp.trace.llb_jsonl import LLBJsonlTracer
+    from memrl.trace.llb_jsonl import LLBJsonlTracer
 
     out = tmp_path / "trace.jsonl"
     tracer = LLBJsonlTracer(path=out, sample_filter="2")  # trace only 2 tasks
@@ -58,7 +58,7 @@ def test_llb_jsonl_tracer_sample_filter_limit(tmp_path: Path):
 
 
 def test_llb_jsonl_tracer_sample_filter_list(tmp_path: Path):
-    from memp.trace.llb_jsonl import LLBJsonlTracer
+    from memrl.trace.llb_jsonl import LLBJsonlTracer
 
     out = tmp_path / "trace.jsonl"
     tracer = LLBJsonlTracer(path=out, sample_filter="x, z")

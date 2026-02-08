@@ -35,7 +35,7 @@ def _meta_full_content(meta) -> str:
 
 
 def test_bcb_generate_code_includes_memoryrl_system_prompt_and_context_format():
-    from memp.run.bcb_runner import BCBRunner, BCBSelection, DEFAULT_SYSTEM_PROMPT
+    from memrl.run.bcb_runner import BCBRunner, BCBSelection, DEFAULT_SYSTEM_PROMPT
 
     llm = _FakeLLM()
     repo_root = Path(__file__).resolve().parents[1]
@@ -72,13 +72,13 @@ def test_bcb_generate_code_includes_memoryrl_system_prompt_and_context_format():
 
 
 def test_adjustment_failure_memory_does_not_store_full_trajectory():
-    # NOTE: We intentionally do not import memp.service.* here because the test
+    # NOTE: We intentionally do not import memrl.service.* here because the test
     # environment may not have the optional MemOS dependency installed.
     #
     # What we ultimately care about for BCB prompt alignment is that failure
     # memories injected into the LLM context do NOT contain the full failed
     # trajectory. In MemRL we enforce this at injection time for BCB.
-    from memp.run.bcb_runner import BCBRunner
+    from memrl.run.bcb_runner import BCBRunner
 
     failed_traj = "FAILED_TRAJECTORY_SHOULD_NOT_BE_STORED"
     legacy_failure_blob = (

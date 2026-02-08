@@ -962,79 +962,6 @@ class AlfworldRunner(BaseRunner):
             "steps": avg_steps # Store the new metric
         })
 
-    def _evaluate_bon(self, game_files: List[str], eval_type: str) -> float:
-        """
-        Evaluate with Best-of-N strategy.
-        Runs multiple evaluation passes (BoN) and logs success rates as a curve.
-        """
-
-        num_mini_batches = int(np.ceil(len(game_files) / self.batch_size))
-        section_mini_batches = [
-            game_files[i*self.batch_size : (i+1)*self.batch_size]
-            for i in range(num_mini_batches)
-            if game_files[i*self.batch_size : (i+1)*self.batch_size]
-        ]
-
-        if not section_mini_batches:
-            logger.warning(f"No games to evaluate for {eval_type}.")
-            return
-
-        # --- BoN Config ---
-        bon_samples = self.bon
-        logger.info(f"Starting Best-of-{bon_samples} evaluation for {eval_type}...")
-
-        all_eval_trajectories = [[] for _ in range(len(game_files))]
-
-        # --- mutil-run ---
-        for b in range(bon_samples):
-            logger.info(f"[BoN] Sampling round {b+1}/{bon_samples}...")
-            eval_trajectories = []
-            for i, mini_batch_game in tqdm(enumerate(section_mini_batches), desc=f"Evaluating round {b+1}/{bon_samples}"):
-                mini_batch_env = None
-                try:
-                    mini_batch_env = self.envs_built(mini_batch_game, task_type=eval_type)
-                    collected_trajs = self._sample_from_batch(mini_batch_env)
-                    eval_trajectories.extend(collected_trajs)
-                finally:
-                    try:
-                        if mini_batch_env is not None:
-                            mini_batch_env.close()
-                    except Exception:
-                        logger.debug("Failed to close BoN eval mini_batch_env", exc_info=True)
-
-            for index, trajs in enumerate(eval_trajectories):
-                all_eval_trajectories[index].append(trajs)
-
-            # --- compute Best-of-(b+1) sr ---
-
-            aggregated_results = []
-            for index, trajs in enumerate(all_eval_trajectories):
-                success = any(t["success"] for t in trajs)
-                if success:
-                    steps = min(t["steps"] for t in trajs if t["success"])
-                else:
-                    steps = min(t["steps"] for t in trajs)
-                aggregated_results.append({"task_index": index, "success": success, "steps": steps})
-
-            num_tasks = len(aggregated_results)
-            success_rate = sum(t["success"] for t in aggregated_results) / num_tasks
-            avg_steps = np.mean([t["steps"] for t in aggregated_results])
-
-            logger.info(f"[{eval_type}] Best-of-{b+1} Success rate: {success_rate:.3f}, Avg steps: {avg_steps:.2f}")
-
-            self.writer.add_scalar(f"Evaluation/BoN_Success_Rate/{eval_type}", success_rate, b+1)
-            self.writer.add_scalar(f"Evaluation/BoN_Avg_Steps/{eval_type}", avg_steps, b+1)
-
-        logger.info(f"--- Evaluation Complete on {eval_type} ---")
-        logger.info(f"Final Best-of-{bon_samples} Success Rate: {success_rate:.2%}")
-        logger.info(f"Final Best-of-{bon_samples} Avg Steps: {avg_steps:.2f}")
-
-        self.results_log.append({
-            "mode": eval_type,
-            "success": success_rate,
-            "steps": avg_steps,
-            "bon": bon_samples
-        })
 
     def run(self):
         """
@@ -1049,174 +976,155 @@ class AlfworldRunner(BaseRunner):
                 self._run_reflection_baseline()
             self.writer.close()
             return
-        if self.bon > 0:
+        if self.mode != 'test': 
+            
             logger.info("eval spilt")
-            self._evaluate_bon(
-                game_files=self.valid_game_files,
-                eval_type="eval_in_distribution"
-            )
-            # logger.info("test spilt")
-            # self._evaluate_bon(
-            #     game_files=self.test_game_files,
-            #     eval_type="eval_out_of_distribution"
-            # )
-        else:
-            if self.mode != 'test': 
-                
-                logger.info("eval spilt")
-                if not skip_initial_eval:
-                    self._evaluate(
-                            game_files=self.valid_game_files,
-                            eval_type="eval_in_distribution", 
-                            after_section=0
-                        )
-                # logger.info("test spilt")
-                # self._evaluate(
-                #         game_files=self.test_game_files,
-                #         eval_type="eval_out_of_distribution", 
-                #         after_section=0
-                #     )        
+            if not skip_initial_eval:
+                self._evaluate(
+                        game_files=self.valid_game_files,
+                        eval_type="eval_in_distribution", 
+                        after_section=0
+                    )    
 
     # --- Loop: Iterate through Sections ---
-        if self.bon == 0 : # do not test bon on val set.
-            # 1. Prepare data splits
-            train_sections_data = self.envs_spilt(self.train_game_files, 'train')
+        # 1. Prepare data splits
+        train_sections_data = self.envs_spilt(self.train_game_files, 'train')
 
-            for section_idx, section_data in enumerate(train_sections_data):
-                section_num = section_idx + 1
-                if section_num < start_section:
-                    logger.info("Skipping section %d due to resume.", section_num)
-                    continue
+        for section_idx, section_data in enumerate(train_sections_data):
+            section_num = section_idx + 1
+            if section_num < start_section:
+                logger.info("Skipping section %d due to resume.", section_num)
+                continue
 
-                logger.info("\n" + "#"*20 + f" STARTING SECTION {section_num}/{self.num_section}" + "#"*20)
+            logger.info("\n" + "#"*20 + f" STARTING SECTION {section_num}/{self.num_section}" + "#"*20)
 
-                section_trajectories = []
+            section_trajectories = []
 
-                # --- Inner Loop: Iterate through mini-batches (environments) ---
-                for i, mini_batch_games in tqdm(enumerate(section_data)):
-                    logger.info(f"Processing mini-batch {i+1}/{len(section_data)} in section {section_num}...")
+            # --- Inner Loop: Iterate through mini-batches (environments) ---
+            for i, mini_batch_games in tqdm(enumerate(section_data)):
+                logger.info(f"Processing mini-batch {i+1}/{len(section_data)} in section {section_num}...")
 
-                    # Collect trajectories
-                    mini_batch_env = None
+                # Collect trajectories
+                mini_batch_env = None
+                try:
+                    mini_batch_env = self.envs_built(mini_batch_games, 'train')
+                    collected_trajs = self._sample_from_batch(mini_batch_env)
+                finally:
                     try:
-                        mini_batch_env = self.envs_built(mini_batch_games, 'train')
-                        collected_trajs = self._sample_from_batch(mini_batch_env)
-                    finally:
-                        try:
-                            if mini_batch_env is not None:
-                                mini_batch_env.close()
-                        except Exception:
-                            logger.debug("Failed to close mini_batch_env", exc_info=True)
+                        if mini_batch_env is not None:
+                            mini_batch_env.close()
+                    except Exception:
+                        logger.debug("Failed to close mini_batch_env", exc_info=True)
 
-                    logger.info(f"Mini-batch {i+1} collected {len(collected_trajs)} trajectories.")
-                    section_trajectories.extend(collected_trajs)
+                logger.info(f"Mini-batch {i+1} collected {len(collected_trajs)} trajectories.")
+                section_trajectories.extend(collected_trajs)
 
-                    # --- Memory Processing for this mini-batch ---
-                    task_descriptions = [traj["task_description"] for traj in collected_trajs]
-                    trajectories = [traj['trajectory'] for traj in collected_trajs]
-                    successes = [traj["success"] for traj in collected_trajs]
+                # --- Memory Processing for this mini-batch ---
+                task_descriptions = [traj["task_description"] for traj in collected_trajs]
+                trajectories = [traj['trajectory'] for traj in collected_trajs]
+                successes = [traj["success"] for traj in collected_trajs]
 
-                    retrieved_ids_list = [
-                        [
-                            mem["memory_id"]
-                            for mem_list in traj["retrieved_mems"].values()
-                            for mem in mem_list
-                            if "memory_id" in mem
-                        ]
-                        for traj in collected_trajs
+                retrieved_ids_list = [
+                    [
+                        mem["memory_id"]
+                        for mem_list in traj["retrieved_mems"].values()
+                        for mem in mem_list
+                        if "memory_id" in mem
                     ]
+                    for traj in collected_trajs
+                ]
 
-                    retrieved_queries = [traj["retrieved_queries"] for traj in collected_trajs]
+                retrieved_queries = [traj["retrieved_queries"] for traj in collected_trajs]
 
-                    # update q value for retrieved mems
-                    updated_q_list = self.memory_service.update_values(successes, retrieved_ids_list)
-                    logger.info(f"Updated Q-values for mini-batch {i+1}: {updated_q_list}")
+                # update q value for retrieved mems
+                updated_q_list = self.memory_service.update_values(successes, retrieved_ids_list)
+                logger.info(f"Updated Q-values for mini-batch {i+1}: {updated_q_list}")
 
-                    metadatas_update = [
-                        {
-                            "source_benchmark": "alfworld_build",
-                            "success": traj["success"],
-                            "q_value": float(self.rl_config.q_init_pos) if traj['success'] else float(self.rl_config.q_init_neg),
-                            "q_visits": 0,
-                            "q_updated_at": datetime.now().isoformat(),
-                            "last_used_at": datetime.now().isoformat(),
-                            "reward_ma": 0.0,
-                        }
-                        for traj in collected_trajs
-                    ]
+                metadatas_update = [
+                    {
+                        "source_benchmark": "alfworld_build",
+                        "success": traj["success"],
+                        "q_value": float(self.rl_config.q_init_pos) if traj['success'] else float(self.rl_config.q_init_neg),
+                        "q_visits": 0,
+                        "q_updated_at": datetime.now().isoformat(),
+                        "last_used_at": datetime.now().isoformat(),
+                        "reward_ma": 0.0,
+                    }
+                    for traj in collected_trajs
+                ]
 
-                    self.memory_service.add_memories(
-                        task_descriptions=task_descriptions,
-                        trajectories=trajectories,
-                        successes=successes,
-                        retrieved_memory_queries=retrieved_queries,
-                        retrieved_memory_ids_list=retrieved_ids_list,
-                        metadatas=metadatas_update
-                    )
+                self.memory_service.add_memories(
+                    task_descriptions=task_descriptions,
+                    trajectories=trajectories,
+                    successes=successes,
+                    retrieved_memory_queries=retrieved_queries,
+                    retrieved_memory_ids_list=retrieved_ids_list,
+                    metadatas=metadatas_update
+                )
 
-                    logger.info(f"Mini-batch {i+1} memory update complete.")
+                logger.info(f"Mini-batch {i+1} memory update complete.")
 
-                logger.info(f"Section {section_num} complete. Total {len(section_trajectories)} trajectories collected.")
+            logger.info(f"Section {section_num} complete. Total {len(section_trajectories)} trajectories collected.")
 
-                
-                self._update_cum_success(section_trajectories)
-                cum_acc = self._current_cum_acc()
-                self._persist_cum_state()
-                logger.info("Section %d Cumulative Acc: %.2f%%", section_num, cum_acc * 100)
-                self.writer.add_scalar("Train/Cumulative_Success_Rate", cum_acc, section_num)
+            
+            self._update_cum_success(section_trajectories)
+            cum_acc = self._current_cum_acc()
+            self._persist_cum_state()
+            logger.info("Section %d Cumulative Acc: %.2f%%", section_num, cum_acc * 100)
+            self.writer.add_scalar("Train/Cumulative_Success_Rate", cum_acc, section_num)
+            self.results_log.append({
+                "section": section_num,
+                "mode": "train_cumulative",
+                "success": cum_acc,
+                "steps": None,
+            })
+
+            try:
+                ckpt_meta = self.memory_service.save_checkpoint_snapshot(
+                    self.ck_dir, ckpt_id=section_num, local_cache_dir=self.local_cache_dir
+                )
+            except TypeError:
+                ckpt_meta = self.memory_service.save_checkpoint_snapshot(
+                    self.ck_dir, ckpt_id=section_num
+                )
+            logger.info(f" Saved ckpt: {ckpt_meta}")
+            snapshot_root = Path(self.ck_dir) / "snapshot" / str(section_num)
+            self._persist_cum_state(snapshot_root / "local_cache" / "cum_state.json")
+            # --- Log results for this section ---
+            for traj_data in section_trajectories:
                 self.results_log.append({
                     "section": section_num,
-                    "mode": "train_cumulative",
-                    "success": cum_acc,
-                    "steps": None,
+                    "success": traj_data["success"],
+                    "steps": traj_data["steps"],
                 })
 
-                try:
-                    ckpt_meta = self.memory_service.save_checkpoint_snapshot(
-                        self.ck_dir, ckpt_id=section_num, local_cache_dir=self.local_cache_dir
+            # --- [TENSORBOARD] Log training metrics for this section ---
+            if section_trajectories:
+                section_success = sum(1 for traj in section_trajectories if traj["success"])
+                section_success_rate = section_success / len(section_trajectories)
+                section_avg_steps = np.mean([traj["steps"] for traj in section_trajectories if traj['trajectory']])
+                
+                self.writer.add_scalar("Train/Section_Success_Rate", section_success_rate, section_num)
+                self.writer.add_scalar("Train/Section_Avg_Steps", section_avg_steps, section_num)
+                logger.info(f"Section {section_num} Training Stats: Success Rate={section_success_rate:.2%}, Avg Steps={section_avg_steps:.2f}")
+
+            if self.mode != 'test':
+                if self.valid_interval > 0 and section_num % self.valid_interval == 0:
+                    self._evaluate(
+                        game_files=self.valid_game_files,
+                        eval_type="eval_in_distribution", 
+                        after_section=section_num
                     )
-                except TypeError:
-                    ckpt_meta = self.memory_service.save_checkpoint_snapshot(
-                        self.ck_dir, ckpt_id=section_num
-                    )
-                logger.info(f" Saved ckpt: {ckpt_meta}")
-                snapshot_root = Path(self.ck_dir) / "snapshot" / str(section_num)
-                self._persist_cum_state(snapshot_root / "local_cache" / "cum_state.json")
-                # --- Log results for this section ---
-                for traj_data in section_trajectories:
-                    self.results_log.append({
-                        "section": section_num,
-                        "success": traj_data["success"],
-                        "steps": traj_data["steps"],
-                    })
 
-                # --- [TENSORBOARD] Log training metrics for this section ---
-                if section_trajectories:
-                    section_success = sum(1 for traj in section_trajectories if traj["success"])
-                    section_success_rate = section_success / len(section_trajectories)
-                    section_avg_steps = np.mean([traj["steps"] for traj in section_trajectories if traj['trajectory']])
-                    
-                    self.writer.add_scalar("Train/Section_Success_Rate", section_success_rate, section_num)
-                    self.writer.add_scalar("Train/Section_Avg_Steps", section_avg_steps, section_num)
-                    logger.info(f"Section {section_num} Training Stats: Success Rate={section_success_rate:.2%}, Avg Steps={section_avg_steps:.2f}")
-
-                if self.mode != 'test':
-                    if self.valid_interval > 0 and section_num % self.valid_interval == 0:
-                        self._evaluate(
-                            game_files=self.valid_game_files,
-                            eval_type="eval_in_distribution", 
-                            after_section=section_num
-                        )
-
-                    # # Check if it's time to run evaluation on the test set
-                    # if self.test_interval > 0 and section_num % self.test_interval == 0:
-                    #     self._evaluate(
-                    #         game_files=self.test_game_files,
-                    #         eval_type="eval_out_of_distribution", 
-                    #         after_section=section_num
-                    #     )
+                # # Check if it's time to run evaluation on the test set
+                # if self.test_interval > 0 and section_num % self.test_interval == 0:
+                #     self._evaluate(
+                #         game_files=self.test_game_files,
+                #         eval_type="eval_out_of_distribution", 
+                #         after_section=section_num
+                #     )
 
             # Final analysis at the end of all sections
-            self._analyze_and_report_results()
+        self._analyze_and_report_results()
         # --- [TENSORBOARD] Close the writer ---
         self.writer.close()

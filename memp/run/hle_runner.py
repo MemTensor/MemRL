@@ -1098,21 +1098,16 @@ class HLERunner(BaseRunner):
             return
 
         # ------------------------------
-        # 初始化/恢复累计 map
-        # ------------------------------
         if not self.train_cumulative_correct_map:
             self.train_cumulative_correct_map = {}
         if not self.valid_cumulative_correct_map:
             self.valid_cumulative_correct_map = {}
 
         # ------------------------------
-        # Step 0：先对验证集评估一次（仅在非恢复或需要重新评估时）
-        # ------------------------------
         if len(valid_df) != 0 and self._resume_section_start == 0:
             valid_res = self._eval_split(valid_df, tag="valid_initial", step=0)
             valid_per_item = valid_res["per_item"]
 
-            # 更新 valid cumulative
             for qid, correct in valid_per_item.items():
                 self.valid_cumulative_correct_map[qid] = bool(correct)
 
@@ -1129,27 +1124,14 @@ class HLERunner(BaseRunner):
             except Exception:
                 pass
 
-        # ------------------------------
-        # Sections = 多次训练
-        # ------------------------------
-        sections = (
-            [list(range(len(train_df)))]
-            if self.num_sections <= 1
-            else [list(range(len(train_df))) for _ in range(self.num_sections)]
-        )
-
         start_section = max(1, int(self._resume_section_start) + 1)
         for sec_idx in range(start_section, self.num_sections + 1):
 
-            # ------------------------------
-            # 1) 训练 section
             # ------------------------------
             if len(train_df) != 0:
                 res = self._train_one_section(train_df, sec_idx)
                 train_per_item = res["per_item"]
 
-                # ------------------------------
-                # 2) 更新 train cumulative
                 # ------------------------------
                 for qid, correct in train_per_item.items():
                     if qid not in self.train_cumulative_correct_map:
@@ -1169,17 +1151,14 @@ class HLERunner(BaseRunner):
                     self.writer.add_scalar("Train/Cumulative_Acc", cumulative_acc, sec_idx)
                 except Exception:
                     pass
-            # 保存累计状态，便于断点续跑
+
             self._save_cum_state(sec_idx + 1)
 
-            # ------------------------------
-            # 3) 训练后做验证：valid eval
             # ------------------------------
             if len(valid_df) != 0:
                 valid_res = self._eval_split(valid_df, tag=f"valid_sec_{sec_idx}", step=sec_idx)
                 valid_per_item = valid_res["per_item"]
 
-                # 更新 valid cumulative
                 for qid, correct in valid_per_item.items():
                     if qid not in self.valid_cumulative_correct_map:
                         self.valid_cumulative_correct_map[qid] = False

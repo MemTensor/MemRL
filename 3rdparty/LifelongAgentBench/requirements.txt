@@ -7,7 +7,8 @@ pyyaml~=6.0.2
 torch~=2.3.1
 transformers~=4.43.1
 uvicorn~=0.22.0
-fastapi==0.115.5
+# Relaxed to avoid conflicts with MemRL's MemoryOS dependency (MemoryOS==1.0.0 requires fastapi>=0.115.12,<0.116.0).
+fastapi>=0.115.12,<0.116.0
 requests~=2.31.0
 colorama~=0.4.6
 sparqlwrapper~=2.0.0

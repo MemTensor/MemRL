@@ -65,6 +65,7 @@ python run/run_hle.py \
 Notes:
 
 - The runner accepts `--categories` and `--category_ratio` for category filtering/sampling.
+- Data can be found at [HLE](https://huggingface.co/datasets/cais/hle).
 - `--judge_model` controls an optional separate judge LLM. We choose GPT-4o to align with [artificialanalysis](https://artificialanalysis.ai/evaluations/humanitys-last-exam).
 
 ### 2) ALFWorld
@@ -77,11 +78,11 @@ python run/run_alfworld.py --config configs/rl_alf_config.yaml
 
 Important notes:
 
-- You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
+- You must install ALFWorld and prepare its data according to the [ALFWorld](https://github.com/alfworld/alfworld) setup.
 - This repo expects an ALFWorld environment config at:
   `configs/envs/alfworld.yaml`
-  (create this file during ALFWorld setup).
-- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (provided in configs, Same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
+  (Provided).
+- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (Provided, same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
 
 ### 3) Lifelong Agent Bench (LLB / LifelongAgentBench)
 

@@ -52,7 +52,68 @@ Example configs:
 
 All runners write logs under `logs/` and results under `results/` (configurable via `experiment.output_dir`).
 
-### 1) BigCodeBench (BCB)
+### 1) HLE
+
+Run:
+
+```bash
+python run/run_hle.py \
+  --config configs/rl_hle_config.yaml \
+  --train /path/to/hle_train.parquet \
+```
+
+Notes:
+
+- The runner accepts `--categories` and `--category_ratio` for category filtering/sampling.
+- `--judge_model` controls an optional separate judge LLM. We choose GPT-4o to align with [artificialanalysis](https://artificialanalysis.ai/evaluations/humanitys-last-exam).
+
+### 2) ALFWorld
+
+Run:
+
+```bash
+python run/run_alfworld.py --config configs/rl_alf_config.yaml
+```
+
+Important notes:
+
+- You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
+- This repo expects an ALFWorld environment config at:
+  `configs/envs/alfworld.yaml`
+  (create this file during ALFWorld setup).
+- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (provided in configs, Same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
+
+### 3) Lifelong Agent Bench (LLB / LifelongAgentBench)
+
+This repo vendors LifelongAgentBench under `3rdparty/LifelongAgentBench` and runs it through `memrl/run/llb_rl_runner.py`.
+
+Quick start:
+
+1. Edit `configs/rl_llb_config.yaml`:
+   - set `llm.api_key` / `embedding.api_key`
+   - set `experiment.task` (`db` | `os`)
+   - set `experiment.split_file` (and optional `experiment.valid_file`)
+2. Run:
+
+```bash
+python run/run_llb.py
+```
+
+Dataset:
+
+- This repo's runner expects a JSON dictionary keyed by `sample_index`, e.g.:
+  `data/llb/os_interaction_train500.json`
+
+Note:
+
+- This open-source release currently supports LLB tasks: `db` and `os` (no `kg`).
+
+Optional tracing (LLB):
+
+- `configs/rl_llb_config.yaml` includes `experiment.trace_jsonl_path`.
+- You can also control tracing with environment variables (see `memrl/trace/llb_jsonl.py`).
+
+### 4) BigCodeBench (BCB)
 
 Run multi-epoch BCB memory benchmark:
 
@@ -60,7 +121,7 @@ Run multi-epoch BCB memory benchmark:
 python run/run_bcb.py \
   --config configs/rl_bcb_config.yaml \
   --split instruct \
-  --epochs 3
+  --epochs 10
 ```
 
 Dataset:
@@ -85,68 +146,6 @@ Notes:
   ```bash
   tensorboard --logdir logs/tensorboard
   ```
-
-### 2) Lifelong Agent Bench (LLB / LifelongAgentBench)
-
-This repo vendors LifelongAgentBench under `3rdparty/LifelongAgentBench` and runs it through `memrl/run/llb_rl_runner.py`.
-
-Quick start:
-
-1. Edit `configs/rl_llb_config.yaml`:
-   - set `llm.api_key` / `embedding.api_key`
-   - set `experiment.task` (`db` | `os`)
-   - set `experiment.split_file` (and optional `experiment.valid_file`)
-2. Run:
-
-```bash
-python run/run_llb.py
-```
-
-Dataset:
-
-- This repo’s runner expects a JSON dictionary keyed by `sample_index`, e.g.:
-  `data/llb/os_interaction_train500.json`
-
-Note:
-
-- This open-source release currently supports LLB tasks: `db` and `os` (no `kg`).
-
-Optional tracing (LLB):
-
-- `configs/rl_llb_config.yaml` includes `experiment.trace_jsonl_path`.
-- You can also control tracing with environment variables (see `memrl/trace/llb_jsonl.py`).
-
-### 3) ALFWorld
-
-Run:
-
-```bash
-python run/run_alfworld.py --config configs/rl_alf_config.yaml
-```
-
-Important notes:
-
-- You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
-- This repo expects an ALFWorld environment config at:
-  `configs/envs/alfworld.yaml`
-  (create this file during ALFWorld setup).
-- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (provided in configs, Same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
-
-### 4) HLE
-
-Run:
-
-```bash
-python run/run_hle.py \
-  --config configs/rl_hle_config.yaml \
-  --train /path/to/hle_train.parquet \
-```
-
-Notes:
-
-- The runner accepts `--categories` and `--category_ratio` for category filtering/sampling.
-- By default, it looks for a parquet next to the repo (e.g., `../hle/test-00000-of-00001-filtered.parquet`) Notice: We processed some questions' pictures from 'gif' to 'png', because its pic is actually a static pic.
-- `--judge_model` controls an optional separate judge LLM. We choose GPT-4o to align with [artificialanalysis](https://artificialanalysis.ai/evaluations/humanitys-last-exam).
 
 ## Project Layout
 

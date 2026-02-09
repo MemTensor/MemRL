@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,11 @@ from memrl.bigcodebench_eval.eval_utils import (
 from memrl.bigcodebench_eval.task_wrappers import get_prompt, load_bcb_data, split_dataset, write_samples
 
 logger = logging.getLogger(__name__)
+
+try:
+    from torch.utils.tensorboard import SummaryWriter  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    SummaryWriter = None  # type: ignore[assignment]
 
 # Default system prompt for memory-augmented code generation (aligned to memory_rl).
 DEFAULT_SYSTEM_PROMPT = """You are an expert Python programmer solving BigCodeBench coding tasks.
@@ -112,6 +118,38 @@ class BCBRunner:
         self._problems: Dict[str, Dict[str, Any]] = {}
         self._train_ids: List[str] = []
         self._val_ids: List[str] = []
+
+        # --- [TENSORBOARD] Initialize SummaryWriter (optional) ---
+        tb_log_dir = (
+            self.root
+            / "logs"
+            / "tensorboard"
+            / f"exp_bcb_{Path(self.output_dir).name}_{time.strftime('%Y%m%d-%H%M%S')}"
+        )
+        if SummaryWriter is None:
+            # Keep runner functional even when tensorboard isn't installed.
+            class _NoOpWriter:
+                def add_scalar(self, *args: Any, **kwargs: Any) -> None:
+                    return
+
+                def close(self) -> None:
+                    return
+
+            self.writer = _NoOpWriter()
+            logger.warning(
+                "TensorBoard is not available (missing dependency). "
+                "Proceeding without TensorBoard logging."
+            )
+        else:
+            self.writer = SummaryWriter(log_dir=str(tb_log_dir))
+            logger.info("TensorBoard logs will be saved to: %s", tb_log_dir)
+
+    def _tb_add_scalar(self, tag: str, value: Any, step: int) -> None:
+        """Best-effort TensorBoard scalar logging."""
+        try:
+            self.writer.add_scalar(tag, value, global_step=int(step))
+        except Exception:
+            return
 
     def _get_retrieve_threshold(self) -> float:
         """BCB threshold knob (aligned to memory_rl)."""
@@ -397,13 +435,37 @@ class BCBRunner:
         pending_retrieved_queries: List[Optional[List[Tuple[str, float]]]] = []
         pending_metadatas: List[Dict[str, Any]] = []
 
-        def _flush_memory_updates() -> None:
+        # TensorBoard aggregation (throttled to the same cadence as memory flushes)
+        tb_window_tasks = 0
+        tb_retrieved_sum = 0
+        tb_simmax_sum = 0.0
+
+        def _flush_memory_updates(step_idx: Optional[int] = None) -> None:
             if not update_memory or not pending_task_descriptions or self.mem is None:
                 return
+            step_idx = int(step_idx or len(pending_task_descriptions))
             try:
-                self.mem.update_values(
+                updated = self.mem.update_values(
                     [float(s) for s in pending_successes], pending_retrieved_ids
                 )
+                # Log Q update summary stats (best-effort).
+                if isinstance(updated, dict) and updated:
+                    vals = [v for v in updated.values() if isinstance(v, (int, float))]
+                    if vals:
+                        self._tb_add_scalar(
+                            f"bcb/{phase}/q_updates/count", len(vals), step=step_idx
+                        )
+                        self._tb_add_scalar(
+                            f"bcb/{phase}/q_updates/mean",
+                            sum(vals) / float(len(vals)),
+                            step=step_idx,
+                        )
+                        self._tb_add_scalar(
+                            f"bcb/{phase}/q_updates/min", min(vals), step=step_idx
+                        )
+                        self._tb_add_scalar(
+                            f"bcb/{phase}/q_updates/max", max(vals), step=step_idx
+                        )
             except Exception:
                 logger.debug("BCB Q update failed (batch)", exc_info=True)
             try:
@@ -466,6 +528,15 @@ class BCBRunner:
                         }
                 except Exception:
                     logger.debug("BCB retrieval failed for %s", task_id, exc_info=True)
+
+            # Update TensorBoard aggregations (best-effort; reset in progress block).
+            if self.retrieve_k > 0:
+                tb_window_tasks += 1
+                tb_retrieved_sum += int(len(selected_ids))
+                try:
+                    tb_simmax_sum += float(retrieval_trace.get("simmax", 0.0) or 0.0)
+                except Exception:
+                    pass
 
             raw_response = self._generate_raw(prompt, memory_context=mem_context)
             code = extract_code_from_response(raw_response)
@@ -537,12 +608,37 @@ class BCBRunner:
                 pending_retrieved_queries.append(retrieved_topk_queries)
                 pending_metadatas.append(meta)
                 if len(pending_task_descriptions) >= 25:
-                    _flush_memory_updates()
+                    _flush_memory_updates(step_idx=(epoch - 1) * max(total, 1) + idx)
 
             if idx % 25 == 0 or idx == total:
                 logger.info("[bcb] epoch %d %s %d/%d pass=%d", epoch, phase, idx, total, pass_count)
+                # TensorBoard scalars (throttled to the same cadence).
+                step = (epoch - 1) * max(total, 1) + idx
+                self._tb_add_scalar(f"bcb/{phase}/processed", idx, step=step)
+                self._tb_add_scalar(f"bcb/{phase}/pass", pass_count, step=step)
+                self._tb_add_scalar(
+                    f"bcb/{phase}/pass_at_1",
+                    (pass_count / float(idx)) if idx else 0.0,
+                    step=step,
+                )
 
-        _flush_memory_updates()
+                if self.retrieve_k > 0:
+                    denom = max(1, tb_window_tasks)
+                    self._tb_add_scalar(
+                        f"bcb/{phase}/retrieved_count_avg",
+                        tb_retrieved_sum / float(denom),
+                        step=step,
+                    )
+                    self._tb_add_scalar(
+                        f"bcb/{phase}/simmax_avg",
+                        tb_simmax_sum / float(denom),
+                        step=step,
+                    )
+                    tb_window_tasks = 0
+                    tb_retrieved_sum = 0
+                    tb_simmax_sum = 0.0
+
+        _flush_memory_updates(step_idx=(epoch - 1) * max(total, 1) + total)
 
         samples_path = os.path.join(phase_dir, "samples.jsonl")
         write_samples(samples, samples_path)
@@ -646,4 +742,8 @@ class BCBRunner:
             "epochs": epoch_summaries,
         }
         self._save_json(os.path.join(self.output_dir, "summary.json"), final)
+        try:
+            self.writer.close()
+        except Exception:
+            pass
         return final

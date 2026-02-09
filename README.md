@@ -83,6 +83,11 @@ Notes:
 - BigCodeBench evaluation uses the vendored repo under `3rdparty/bigcodebench-main`.
 - Default subset is `full`. Use `--subset hard` for the smaller hard subset.
 - Retrieval threshold: use `--retrieve_threshold` to override; otherwise it falls back to `rl_config.sim_threshold` (then `rl_config.tau`).
+- TensorBoard (optional): BCB writes scalars under `logs/tensorboard/` when TensorBoard support is available.
+  View with:
+  ```bash
+  tensorboard --logdir logs/tensorboard
+  ```
 
 ### 2) Lifelong Agent Bench (LLB / LifelongAgentBench)
 

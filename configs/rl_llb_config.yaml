@@ -1,8 +1,8 @@
-# Full (local) config for running LifelongAgentBench (LLB) with MemRL.
+# Example config for running LifelongAgentBench (LLB) with MemRL.
 #
 # NOTE:
-# - This file is intentionally gitignored (may contain API keys / endpoints).
-# - `run/run_llb.py` loads this file by default.
+# - Put private values (API keys / internal endpoints) in `configs/rl_llb_config.local.yaml` (gitignored).
+# - `run/run_llb.py` prefers `configs/rl_llb_config.local.yaml` when it exists; otherwise it uses this file.
 # - For LLB "epoch" semantics in this repo, use `experiment.num_sections`:
 #   - num_sections = 10 means replaying the same dataset 10 times ("10 epochs").
 #
@@ -60,7 +60,7 @@ environment:  # Environment settings (mostly for ALFWorld; unused for LLB).
   alfworld_env_type: "AlfredTWEnv"                  # ALFWorld env type (unused for LLB).
 
 experiment:  # Experiment / runner settings.
-  experiment_name: "llb_memrl_os_20ep_rl1.0_10-5_no_normalization-q_floor_0.5_dedup_by_task_id_true_0.99_v2"  # Experiment name (used in log/ckpt directory names).
+  experiment_name: "your_exp_name"  # Experiment name (used in log/ckpt directory names).
 
   # -------- Optional per-task JSONL tracing (LLB) --------
   # If set (and TRACE_JSONL_PATH env var is NOT set), LLB will write 1 JSON object per task (one line per task)
@@ -68,11 +68,13 @@ experiment:  # Experiment / runner settings.
   # final chat history, and outcome.
   #
   # Set to null/empty string to disable tracing.
-  trace_jsonl_path: "logs/llb_trace_no_normalization_q_floor_0.5_dedup_by_task_id_true_0.99_v2.json"
-  # Optional task filter for tracing (and TRACE_SAMPLE_FILTER env var is NOT set):
-  # - "3"  => only record the first 3 tasks (recommended to sanity-check without huge files)
+  trace_jsonl_path: null
+  # Optional task filter for tracing (applied when TRACE_SAMPLE_FILTER env var is NOT set):
+  # - "3"       => only record the first 3 tasks (recommended to sanity-check without huge files)
   # - "123,456" => only record tasks whose sample_index is in the list
-  # - null/empty => record all tasks (can get very large)
+  # - null/""   => record all tasks (can get very large)
+  trace_sample_filter: null
+
 
   # -------- LLB retrieval scoring normalization --------
   # LLB only: controls how retrieval candidates are ranked when RL/value-driven is enabled.
@@ -82,13 +84,13 @@ experiment:  # Experiment / runner settings.
 
   # -------- LLB q_floor (optional) --------
   # LLB only: if set, clamp Q values to at least this value (applied during both Q update and retrieval scoring).
-  # Set to 0.5 to mimic memory_rl's q_floor behavior; set to 0.0 to effectively disable.
+  # Set to 0.0 to effectively disable.
   llb_q_floor: 0.0
 
   # -------- LLB Phase-B task_id de-dup (optional) --------
   # LLB only: when selecting the final top-k memories, deduplicate by task_id (fallback sample_index/id).
-  # This helps avoid selecting multiple memories from the same task.
   llb_dedup_by_task_id: false
+
 
   # Algorithm controls
   algorithm: "rl"              # Which algorithm to run: memp | rl | mdp | rlmdp | slow_rl.
@@ -98,13 +100,13 @@ experiment:  # Experiment / runner settings.
   mode: "train"                # train | test (runner may interpret this).
 
   # LLB dataset controls
-  task: "os"                   # LLB task type: db | os | kg (also accepts "os_interaction").
+  task: "os"                   # LLB task type: db | os | kg (also accepts "db_bench" / "os_interaction").
   # Path to the LLB dataset JSON (a dict keyed by sample_index).
-  # NOTE (train-only / 500 tasks):
-  # - This repo's LLB runner expects a single JSON dict keyed by sample_index.
-  # - If you manually split 350/150 before, you can merge them into one 500-task file via:
-  #     python scripts/merge_llb_train_val.py --train data/llb/os_interaction_train.json --val data/llb/os_interaction_val.json --out data/llb/os_interaction_train500.json
-  split_file: "data/llb/os_interaction_train500.json"  # Main dataset JSON path (required).
+  # This repo provides LLB data files under data/llb/:
+  #   - OSInteraction: data/llb/os_interaction_{data,train,val}.json
+  #   - DBBench:      data/llb/{db_bench_data,db_train,db_val}.json
+
+  split_file: "data/llb/os_interaction_data.json"  # Main dataset JSON path (required).
   # Optional validation dataset JSON (same format as split_file). Set null to disable validation.
   valid_file: null
 

@@ -90,9 +90,9 @@ This repo vendors LifelongAgentBench under `3rdparty/LifelongAgentBench` and run
 
 Quick start:
 
-1. Edit `configs/rl_llb_config.yaml`:
+1. Edit `configs/rl_llb_config.local.yaml` if it exists (preferred by `run/run_llb.py`); otherwise edit `configs/rl_llb_config.yaml`:
    - set `llm.api_key` / `embedding.api_key`
-   - set `experiment.task` (`db` | `os`)
+   - set `experiment.task` (`db` | `os`) (also accepts `db_bench` / `os_interaction`)
    - set `experiment.split_file` (and optional `experiment.valid_file`)
 2. Run:
 
@@ -102,8 +102,17 @@ python run/run_llb.py
 
 Dataset:
 
-- This repo's runner expects a JSON dictionary keyed by `sample_index`, e.g.:
-  `data/llb/os_interaction_train500.json`
+- `experiment.split_file` / `experiment.valid_file` should point to a JSON dictionary keyed by `sample_index`
+  (i.e., top-level is an object/dict; keys are strings like `"0"`, values are per-sample dicts).
+- This repo provides LLB datasets under `data/llb/`:
+  - OSInteraction (task = `os` / `os_interaction`):
+    - `data/llb/os_interaction_data.json` (500 samples)
+    - `data/llb/os_interaction_train.json` (350 samples)
+    - `data/llb/os_interaction_val.json` (150 samples)
+  - DBBench (task = `db` / `db_bench`):
+    - `data/llb/db_bench_data.json` (500 samples)
+    - `data/llb/db_train.json` (361 samples)
+    - `data/llb/db_val.json` (139 samples)
 
 Note:
 

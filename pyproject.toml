@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "MemoryOS>=1.0.0",
+    "MemoryOS==1.0.0",
     "openai>=1.0.0",
     "pandas>=2.0.0",
     "pyyaml>=6.0",
@@ -36,7 +36,8 @@ dependencies = [
     "pydantic>=2.0",
     "numpy>=1.24.0",
     "tenacity>=8.0.0",
-    "textworld>=1.6.0",
+    # Benchmark-specific dependencies are installed via `requirements.txt`
+    # (see `requirements/benchmarks.txt`) to keep the core package lightweight.
 ]
 
 [project.optional-dependencies]

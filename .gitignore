@@ -29,6 +29,10 @@ code_review/
 run_llb_screen_local.sh
 run_llb_trainonly_screen_local.sh
 scripts/analyze_llb_same_task_retrieval_prob.py
+scripts/smoke_*.py
+scripts/smoke_*.sh
+scripts/sync_local_configs_from_bcb.py
+scripts/run_bcb_train*.sh
 
 ## Local scratch tests (keep them out of the OSS repo)
 tests/test_llb_memory_context_strip_failed_trajectory.py
@@ -43,3 +47,7 @@ docs/plans/
 .claude/
 .codex/
 openspec/
+
+## Local configs (may contain API keys / internal endpoints)
+configs/*.local.yaml
+configs/*.local.yml

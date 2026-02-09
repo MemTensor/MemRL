@@ -85,6 +85,27 @@ def setup_logging(project_root: Path, name: str):
 
 logger = logging.getLogger(__name__)
 
+def _default_llb_config_path(project_root: Path) -> Path:
+    """Prefer a gitignored local config when present."""
+    local_path = project_root / "configs" / "rl_llb_config.local.yaml"
+    if local_path.exists():
+        return local_path
+    return project_root / "configs" / "rl_llb_config.yaml"
+
+
+def parse_args(project_root: Path) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Run LifelongAgentBench (LLB) with MemRL")
+    p.add_argument(
+        "--config",
+        type=str,
+        default=str(_default_llb_config_path(project_root)),
+        help=(
+            "Path to YAML config. If omitted, prefers configs/rl_llb_config.local.yaml "
+            "when it exists, otherwise uses configs/rl_llb_config.yaml."
+        ),
+    )
+    return p.parse_args()
+
 
 def main():
     """
@@ -98,7 +119,10 @@ def main():
         logger.info("Initializing all components...")
 
         # Load Config and Providers
-        config_path = project_root / "configs" / "rl_llb_config.yaml"
+        args = parse_args(project_root)
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = (project_root / config_path).resolve()
         config = MempConfig.from_yaml(str(config_path))
         setup_logging(project_root, config.experiment.experiment_name)
 

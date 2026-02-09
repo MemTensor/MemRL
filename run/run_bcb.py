@@ -60,7 +60,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--config",
         type=str,
-        default=str(project_root / "configs" / "rl_bcb_config.yaml"),
+        default=str(
+            (project_root / "configs" / "rl_bcb_config.local.yaml")
+            if (project_root / "configs" / "rl_bcb_config.local.yaml").exists()
+            else (project_root / "configs" / "rl_bcb_config.yaml")
+        ),
     )
     # Default to the full BigCodeBench set. Use `--subset hard` for the smaller subset.
     p.add_argument("--subset", type=str, default="full", choices=["hard", "full"])

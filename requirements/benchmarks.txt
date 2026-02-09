@@ -1,23 +1,21 @@
-# Install MemRL (editable) + dependencies needed to run the 4 benchmark entrypoints in `run/`.
+# Dependencies needed to run the 4 benchmark entrypoints in `run/`.
 #
 # Usage:
-#   python -m venv .venv
-#   source .venv/bin/activate
-#   pip install -U pip
-#   pip install -r requirements-benchmarks.txt
+#   pip install -r requirements.txt
 #
 # Notes:
 # - This includes dependencies from vendored benchmark repos (BigCodeBench / LifelongAgentBench).
 # - ALFWorld may still require extra non-pip setup (game data, environment config, etc.).
 
--e .
-
 # BigCodeBench (vendored under 3rdparty/)
--r 3rdparty/bigcodebench-main/Requirements/requirements.txt
+-r ../3rdparty/bigcodebench-main/Requirements/requirements.txt
 
 # LifelongAgentBench (vendored under 3rdparty/)
--r 3rdparty/LifelongAgentBench/requirements.txt
+-r ../3rdparty/LifelongAgentBench/requirements.txt
 
 # HLE reads parquet via pandas; pyarrow is commonly required for parquet support.
 pyarrow>=14.0.0
 
+# ALFWorld runtime deps (python packages)
+alfworld==0.4.2
+textworld>=1.6.0

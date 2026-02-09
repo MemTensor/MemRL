@@ -42,7 +42,15 @@ def setup_logging(project_root: Path, name: str):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run AlfWorld benchmark with memory-agent")
-    p.add_argument("--config", type=str, default=str(project_root / "configs" / "rl_alf_config.yaml"))
+    p.add_argument(
+        "--config",
+        type=str,
+        default=str(
+            (project_root / "configs" / "rl_alf_config.local.yaml")
+            if (project_root / "configs" / "rl_alf_config.local.yaml").exists()
+            else (project_root / "configs" / "rl_alf_config.yaml")
+        ),
+    )
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--max_tokens", type=int, default=None)
     return p.parse_args()

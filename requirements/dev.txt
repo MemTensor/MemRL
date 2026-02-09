@@ -2,7 +2,7 @@
 # Generated from pyproject.toml [project.optional-dependencies.dev]
 
 # Include core dependencies
--r requirements.txt
+-r ../requirements.txt
 
 # Testing frameworks
 pytest>=7.0

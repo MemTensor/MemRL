@@ -1,21 +1,14 @@
-# Core dependencies for Memp project
-# Generated from pyproject.toml dependencies
+# Single entrypoint for setting up an environment that can run all 4 benchmarks.
+#
+# Usage:
+#   python -m venv .venv
+#   source .venv/bin/activate
+#   pip install -U pip
+#   pip install -r requirements.txt
+#
+# Notes:
+# - Installs MemRL in editable mode.
+# - Benchmark-specific deps live under `requirements/`.
 
-# Memory and AI frameworks
-MemoryOS>=1.0.0
-
-# LLM and API clients
-openai>=1.0.0
-
-# Data processing
-pandas>=2.0.0
-numpy>=1.24.0
-
-# Configuration and utilities
-pyyaml>=6.0
-click>=8.0
-pydantic>=2.0
-tenacity>=8.0.0
-
-# Environment simulation
-textworld>=1.6.0
+-e .
+-r requirements/benchmarks.txt

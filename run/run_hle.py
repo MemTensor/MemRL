@@ -39,7 +39,15 @@ def setup_logging(project_root: Path, name: str):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run HLE benchmark with memory-agent")
-    p.add_argument("--config", type=str, default=str(project_root / "configs" / "rl_hle_config.yaml"))
+    p.add_argument(
+        "--config",
+        type=str,
+        default=str(
+            (project_root / "configs" / "rl_hle_config.local.yaml")
+            if (project_root / "configs" / "rl_hle_config.local.yaml").exists()
+            else (project_root / "configs" / "rl_hle_config.yaml")
+        ),
+    )
     default_parquet = str(project_root.parent / "hle" / "test-00000-of-00001-filtered.parquet")
     p.add_argument("--valid", type=str, default=default_parquet)
     # Use the same parquet as training set by default

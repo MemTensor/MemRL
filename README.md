@@ -124,11 +124,11 @@ python run/run_alfworld.py --config configs/rl_alf_config.yaml
 
 Important notes:
 
-- You must install ALFWorld and prepare its data according to the ALFWorld/TextWorld setup.
+- You must install ALFWorld and prepare its data according to the [ALFWorld](https://github.com/alfworld/alfworld) setup.
 - This repo expects an ALFWorld environment config at:
   `configs/envs/alfworld.yaml`
-  (create this file during ALFWorld setup).
-- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (provided in configs, Same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
+  (Provided).
+- Few-shot examples are expected at `data/alfworld/alfworld_examples.json` (Provided in configs, same as [ReAct](https://github.com/ysymyth/ReAct)) (configurable via `experiment.few_shot_path`).
 
 ### 4) HLE
 
@@ -141,8 +141,8 @@ python run/run_hle.py \
 ```
 
 Notes:
-
 - The runner accepts `--categories` and `--category_ratio` for category filtering/sampling.
+- Data can be found at [HLE](https://huggingface.co/datasets/cais/hle).
 - By default, it looks for a parquet next to the repo (e.g., `../hle/test-00000-of-00001-filtered.parquet`) Notice: We processed some questions' pictures from 'gif' to 'png', because its pic is actually a static pic.
 - `--judge_model` controls an optional separate judge LLM. We choose GPT-4o to align with [artificialanalysis](https://artificialanalysis.ai/evaluations/humanitys-last-exam).
 

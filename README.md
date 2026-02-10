@@ -25,10 +25,13 @@ This repo is a Python package under the **`memrl`** namespace.
 Install MemRL plus the dependencies needed to run all 4 benchmark entrypoints under `run/`.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+# 新建 conda 环境，指定 python=3.10
+conda create -n memoryrl python=3.10 -y
+
+conda activate memoryrl
 
 pip install -U pip
+
 pip install -r requirements.txt
 ```
 

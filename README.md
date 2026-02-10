@@ -91,6 +91,10 @@ Important notes:
 
 This repo vendors LifelongAgentBench under `3rdparty/LifelongAgentBench` and runs it through `memrl/run/llb_rl_runner.py`.
 
+Docker setup:
+
+- LLB tasks (`db` / `os`) require Docker environments. Please follow the Docker deployment instructions at [LifelongAgentBench](https://github.com/caixd-220529/LifelongAgentBench) to build and start the required containers before running.
+
 Quick start:
 
 1. Edit `configs/rl_llb_config.local.yaml` if it exists (preferred by `run/run_llb.py`); otherwise edit `configs/rl_llb_config.yaml`:

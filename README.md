@@ -160,6 +160,26 @@ Notes:
   tensorboard --logdir logs/tensorboard
   ```
 
+## Troubleshooting
+
+### ImportError: `CXXABI_1.3.15` not found (often mentions `libstdc++.so.6` / `libicui18n.so`)
+
+On some hosts, the dynamic loader may forcibly preload an old system `libstdc++.so.6` (e.g. via `/etc/ld.so.preload`),
+which can break `import sqlite3` in a conda environment (and therefore MemOS / SQLAlchemy initialization).
+
+Workaround (run **after** activating your conda environment, before running any `run/run_*.py`):
+
+```bash
+export LD_PRELOAD="$CONDA_PREFIX/lib/libstdc++.so.6${LD_PRELOAD:+:$LD_PRELOAD}"
+python -c "import sqlite3; print('sqlite ok')"
+```
+
+If you have root access, you can also inspect the host preload configuration:
+
+```bash
+cat /etc/ld.so.preload
+```
+
 ## Project Layout
 
 - `memrl/`: main library code (MemoryService, runners, providers, tracing)

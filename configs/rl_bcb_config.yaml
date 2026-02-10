@@ -11,9 +11,6 @@
 #   conda activate memory
 #   python run/run_bcb.py --config configs/rl_bcb_config.full.yaml --subset hard --split instruct --epochs 3
 
-project_name: "memp"
-version: "0.1.0"
-
 llm:
   provider: "openai"
   # NOTE: do not commit real keys/endpoints in this file.

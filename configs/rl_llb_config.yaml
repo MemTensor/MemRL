@@ -13,9 +13,6 @@
 #
 # Values below are conservative defaults / placeholders; adjust as needed.
 
-project_name: "memp"  # Project name (mainly for bookkeeping/logging).
-version: "0.1.0"      # Project version (mainly for bookkeeping/logging).
-
 llm:  # LLM (chat/completions) provider settings.
   # OpenAI-compatible chat completions endpoint (OpenAI, vLLM, etc.).
   provider: "openai"                # LLM provider name (used by run/run_llb.py to set OpenAI client).

@@ -25,7 +25,12 @@ from memrl.agent.memp_agent import MempAgent
 from memrl.agent.history import EpisodeHistory
 from memrl.service.memory_service import MemoryService
 from memrl.service.value_driven import RLConfig
-
+from alfworld.agents.environment.alfred_tw_env import (  # type: ignore
+    AlfredTWEnv,
+    AlfredDemangler,
+    AlfredInfos,
+    AlfredExpert,
+)
 MAX_RETRIES = 4 
 RETRY_DELAY = 2  
 
@@ -81,18 +86,6 @@ class AlfworldRunner(BaseRunner):
         
         self.rl_config: Optional[RLConfig] = rl_config
 
-        # --- [Dataset] Initialize game files ---
-        try:
-            from alfworld.agents.environment.alfred_tw_env import (  # type: ignore
-                AlfredTWEnv,
-                AlfredDemangler,
-                AlfredInfos,
-                AlfredExpert,
-            )
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(
-                "ALFWorld is not installed. Install ALFWorld dependencies to run the ALFWorld benchmark."
-            ) from e
 
         env_controller = AlfredTWEnv(self.env_config, train_eval="train")
         all_train_game_files = env_controller.game_files

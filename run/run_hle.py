@@ -48,10 +48,7 @@ def parse_args() -> argparse.Namespace:
             else (project_root / "configs" / "rl_hle_config.yaml")
         ),
     )
-    default_parquet = str(project_root.parent / "hle" / "test-00000-of-00001-filtered.parquet")
-    p.add_argument("--valid", type=str, default=default_parquet)
-    # Use the same parquet as training set by default
-    p.add_argument("--train", type=str, default=default_parquet)
+    p.add_argument("--train", type=str)
     p.add_argument("--num_valid", type=int, default=0)
     p.add_argument("--num_train", type=int, default=0)
     p.add_argument("--temperature", type=float, default=None)
@@ -176,7 +173,6 @@ def main():
         )
 
         sel = HLESelection(
-            valid_path=args.valid,
             train_path=args.train,
             num_valid=(args.num_valid if args.num_valid and args.num_valid > 0 else None),
             num_train=(args.num_train if args.num_train and args.num_train > 0 else None),

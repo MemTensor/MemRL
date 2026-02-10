@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class HLESelection:
-    valid_path: str
     train_path: Optional[str] = None
     num_valid: Optional[int] = None
     num_train: Optional[int] = None
@@ -221,9 +220,9 @@ class HLERunner(BaseRunner):
         """
 
         # 1. 读取数据（统一来源）
-        if not Path(self.sel.valid_path).exists():
-            raise ValueError(f"HLE dataset path does not exist: {self.sel.valid_path}")
-        df = pd.read_parquet(self.sel.valid_path)
+        if not Path(self.sel.train_path).exists():
+            raise ValueError(f"HLE dataset path does not exist: {self.sel.train_path}")
+        df = pd.read_parquet(self.sel.train_path)
 
         # 1.1 optional category filter / sampling
         df = self._filter_by_category(df)

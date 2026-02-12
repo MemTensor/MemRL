@@ -169,6 +169,41 @@ class HLERunner(BaseRunner):
         except Exception as e:
             logger.warning(f"[Resume] Failed to save cum_state: {e}")
 
+    def _save_cum_state_to_snapshot(self, sec_idx: int):
+        """Mirror runner cumulative state into snapshot/<sec>/local_cache for epoch-aligned resume."""
+        try:
+            if not self._cum_state_path.exists():
+                return
+            snapshot_dir = self.ck_dir / "snapshot" / str(int(sec_idx))
+            if not self._is_valid_snapshot_dir(snapshot_dir):
+                return
+            snapshot_state = (
+                snapshot_dir
+                / "local_cache"
+                / "cum_state.json"
+            )
+            snapshot_state.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_state.write_text(self._cum_state_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception as e:
+            logger.warning(
+                "[Resume] Failed to persist checkpoint cum_state for section %s: %s",
+                sec_idx,
+                e,
+            )
+
+    def _is_valid_snapshot_dir(self, snapshot_dir: Path) -> bool:
+        """Return True only for real memory snapshots (not placeholder numeric dirs)."""
+        try:
+            if not snapshot_dir.is_dir():
+                return False
+            if (snapshot_dir / "snapshot_meta.json").is_file():
+                return True
+            if (snapshot_dir / "cube").is_dir():
+                return True
+        except Exception:
+            return False
+        return False
+
     def _resume_from_ckpt_if_needed(self):
         # decide where to resume memory from
         resume_root = None
@@ -179,34 +214,86 @@ class HLERunner(BaseRunner):
             if (self.ck_dir / "snapshot").exists():
                 resume_root = self.ck_dir
 
-        # load cumulative state (prefer resume root if available)
-        if resume_root is not None:
-            candidate_local = None
-            if (resume_root / "local_cache").exists():
-                candidate_local = resume_root / "local_cache"
-            elif resume_root.parent.name == "snapshot" and (resume_root.parent.parent / "local_cache").exists():
-                candidate_local = resume_root.parent.parent / "local_cache"
-            if candidate_local and (candidate_local / "cum_state.json").exists():
-                self._load_cum_state(candidate_local / "cum_state.json")
-            else:
-                self._load_cum_state()
-        else:
-            self._load_cum_state()
-
         if resume_root is None:
+            self._load_cum_state()
             return
 
         snapshot_root = resume_root / "snapshot" if (resume_root / "snapshot").is_dir() else resume_root
-        ckpts = [p for p in snapshot_root.iterdir() if p.is_dir() and p.name.isdigit()]
-        if not ckpts:
+        ckpts = []
+        if snapshot_root.exists():
+            ckpts = [
+                p
+                for p in snapshot_root.iterdir()
+                if p.is_dir() and p.name.isdigit() and self._is_valid_snapshot_dir(p)
+            ]
+
+        target = None
+        if ckpts:
+            ckpts.sort(key=lambda p: int(p.name))
+            target = ckpts[-1]
+            if getattr(self, "ckpt_resume_epoch", None) is not None:
+                try:
+                    target = next(p for p in ckpts if int(p.name) == int(self.ckpt_resume_epoch))
+                except StopIteration:
+                    logger.warning(f"[Resume] ckpt epoch {self.ckpt_resume_epoch} not found, using last.")
+        elif (
+            resume_root.is_dir()
+            and resume_root.name.isdigit()
+            and self._is_valid_snapshot_dir(resume_root)
+        ):
+            # Also allow passing a concrete epoch directory directly.
+            target = resume_root
+
+        if target is None:
+            # Non-checkpoint resume mode: use experiment-level cumulative state.
+            candidate_states = [
+                resume_root / "local_cache" / "cum_state.json",
+            ]
+            if resume_root.parent.name == "snapshot":
+                candidate_states.append(resume_root.parent.parent / "local_cache" / "cum_state.json")
+            candidate_states.append(self._cum_state_path)
+
+            for state_path in candidate_states:
+                if state_path.exists():
+                    self._load_cum_state(state_path)
+                    return
+            self._load_cum_state()
             return
-        ckpts.sort(key=lambda p: int(p.name))
-        target = ckpts[-1]
-        if getattr(self, "ckpt_resume_epoch", None):
+
+        target_state = target / "local_cache" / "cum_state.json"
+        explicit_epoch = getattr(self, "ckpt_resume_epoch", None) is not None
+        if target_state.exists():
+            self._load_cum_state(target_state)
+        elif explicit_epoch:
+            # Explicit epoch resume should stay aligned with the memory checkpoint.
             try:
-                target = next(p for p in ckpts if int(p.name) == int(self.ckpt_resume_epoch))
-            except StopIteration:
-                logger.warning(f"[Resume] ckpt epoch {self.ckpt_resume_epoch} not found, using last.")
+                self.train_cumulative_correct_map = {}
+                self.valid_cumulative_correct_map = {}
+                self._resume_section_start = int(target.name) + 1
+            except Exception:
+                self._resume_section_start = 1
+            logger.warning(
+                "[Resume] Missing checkpoint-local cum_state at %s; using epoch-derived next_section=%s.",
+                target_state,
+                self._resume_section_start,
+            )
+        else:
+            # Best-effort fallback for non-explicit resume.
+            candidate_states = [
+                resume_root / "local_cache" / "cum_state.json",
+            ]
+            if resume_root.parent.name == "snapshot":
+                candidate_states.append(resume_root.parent.parent / "local_cache" / "cum_state.json")
+            candidate_states.append(self._cum_state_path)
+            loaded_state = False
+            for state_path in candidate_states:
+                if state_path.exists():
+                    self._load_cum_state(state_path)
+                    loaded_state = True
+                    break
+            if not loaded_state:
+                self._load_cum_state()
+
         try:
             if self.memory_service:
                 self.memory_service.load_checkpoint_snapshot(str(target), mem_cube_id=self.memory_service.default_cube_id)
@@ -1123,7 +1210,7 @@ class HLERunner(BaseRunner):
             except Exception:
                 pass
 
-        start_section = max(1, int(self._resume_section_start) + 1)
+        start_section = max(1, int(self._resume_section_start))
         for sec_idx in range(start_section, self.num_sections + 1):
 
             # ------------------------------
@@ -1152,6 +1239,7 @@ class HLERunner(BaseRunner):
                     pass
 
             self._save_cum_state(sec_idx + 1)
+            self._save_cum_state_to_snapshot(sec_idx)
 
             # ------------------------------
             if len(valid_df) != 0:

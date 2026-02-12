@@ -300,6 +300,11 @@ class AlfworldRunner(BaseRunner):
             if (base / "snapshot").exists():
                 return base / "snapshot" / str(self.ckpt_resume_epoch)
             return base / str(self.ckpt_resume_epoch)
+
+        if base.name == "snapshot":
+            return base
+        if (base / "snapshot").exists():
+            return base / "snapshot"
         return base
 
     def _load_cum_state(self, path: Optional[Path] = None) -> None:
@@ -678,31 +683,53 @@ class AlfworldRunner(BaseRunner):
         if not snapshot_dir or not snapshot_dir.exists():
             logger.warning("Resume enabled but snapshot not found: %s", snapshot_dir)
             return 1
+
         loaded = False
+        loaded_checkpoint_id: Optional[int] = None
         if hasattr(self.memory_service, "load_checkpoint_snapshot"):
             try:
-                self.memory_service.load_checkpoint_snapshot(
+                loaded_checkpoint_id = self.memory_service.load_checkpoint_snapshot(
                     str(snapshot_dir), local_cache_dir=str(self.local_cache_dir)
                 )
                 loaded = True
             except TypeError:
                 try:
-                    self.memory_service.load_checkpoint_snapshot(str(snapshot_dir))
+                    loaded_checkpoint_id = self.memory_service.load_checkpoint_snapshot(str(snapshot_dir))
                     loaded = True
                 except Exception:
                     logger.warning("Failed to load checkpoint snapshot from %s", snapshot_dir, exc_info=True)
             except Exception:
                 logger.warning("Failed to load checkpoint snapshot from %s", snapshot_dir, exc_info=True)
-        if loaded:
-            self._load_cum_state(snapshot_dir / "local_cache" / "cum_state.json")
-        else:
+
+        if not loaded:
             return 1
+
+        state_candidates = []
+        if isinstance(loaded_checkpoint_id, int) and loaded_checkpoint_id > 0:
+            if snapshot_dir.name.isdigit() and int(snapshot_dir.name) == loaded_checkpoint_id:
+                state_candidates.append(snapshot_dir / "local_cache" / "cum_state.json")
+            else:
+                state_candidates.append(snapshot_dir / str(loaded_checkpoint_id) / "local_cache" / "cum_state.json")
+        state_candidates.append(snapshot_dir / "local_cache" / "cum_state.json")
+
+        loaded_state = False
+        for state_path in state_candidates:
+            if state_path.exists():
+                self._load_cum_state(state_path)
+                loaded_state = True
+                break
+        if not loaded_state:
+            self._load_cum_state(snapshot_dir / "local_cache" / "cum_state.json")
+
         resume_epoch = self.ckpt_resume_epoch
         if resume_epoch is None:
-            try:
-                resume_epoch = int(snapshot_dir.name)
-            except Exception:
-                resume_epoch = None
+            if isinstance(loaded_checkpoint_id, int) and loaded_checkpoint_id > 0:
+                resume_epoch = loaded_checkpoint_id
+            else:
+                try:
+                    resume_epoch = int(snapshot_dir.name)
+                except Exception:
+                    resume_epoch = None
         return (resume_epoch + 1) if resume_epoch else 1
 
     def process_retrieve_mems(self, retrieved_mems_per_slot):

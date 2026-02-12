@@ -34,12 +34,7 @@ scripts/sync_local_configs_from_bcb.py
 scripts/run_bcb_train*.sh
 
 ## Local scratch tests (keep them out of the OSS repo)
-tests/test_llb_memory_context_strip_failed_trajectory.py
-tests/test_llb_q_floor.py
-tests/test_llb_task_id_dedup.py
-tests/test_llb_trace_json_output.py
-tests/test_llb_zscore_toggle.py
-tests/test_task_id_extraction.py
+tests/
 
 ## Internal notes (do not publish)
 docs/plans/

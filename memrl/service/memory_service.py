@@ -192,20 +192,29 @@ def _resolve_snapshot_dirs(
 
     IMPORTANT: meta["qdrant_dir"] may be None if qdrant copy failed during save.
     Treat None/empty as "missing" and fall back to <snapshot_root>/qdrant.
+
+    Paths from meta are accepted only when they still exist. This keeps resume
+    stable when checkpoints are moved across machines/directories.
     """
     import os
 
-    cube_dir = os.path.join(snapshot_root, "cube")
-    qdrant_dir = os.path.join(snapshot_root, "qdrant")
+    default_cube_dir = os.path.join(snapshot_root, "cube")
+    default_qdrant_dir = os.path.join(snapshot_root, "qdrant")
+    cube_dir = default_cube_dir
+    qdrant_dir = default_qdrant_dir
     checkpoint_id = 0
 
     if isinstance(meta, dict):
         try:
-            cube_dir = meta.get("cube_dir") or cube_dir
+            cube_candidate = meta.get("cube_dir")
+            if isinstance(cube_candidate, str) and cube_candidate and os.path.isdir(cube_candidate):
+                cube_dir = cube_candidate
         except Exception:
             pass
         try:
-            qdrant_dir = meta.get("qdrant_dir") or qdrant_dir
+            qdrant_candidate = meta.get("qdrant_dir")
+            if isinstance(qdrant_candidate, str) and qdrant_candidate and os.path.isdir(qdrant_candidate):
+                qdrant_dir = qdrant_candidate
         except Exception:
             pass
         try:

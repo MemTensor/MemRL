@@ -1,0 +1,13 @@
+{
+  "seed": 123,
+  "train_ratio": 1.0,
+  "total": 3,
+  "train_count": 3,
+  "val_count": 0,
+  "train_ids": [
+    "BigCodeBench/582",
+    "BigCodeBench/598",
+    "BigCodeBench/396"
+  ],
+  "val_ids": []
+}

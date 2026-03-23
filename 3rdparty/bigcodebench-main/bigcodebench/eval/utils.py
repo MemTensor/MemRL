@@ -289,6 +289,7 @@ def reliability_guard(max_as_limit, max_data_limit, max_stack_limit):
     
     import os
     import time
+    import tempfile
     from datetime import datetime
 
     os.environ['TZ'] = 'UTC'
@@ -297,24 +298,55 @@ def reliability_guard(max_as_limit, max_data_limit, max_stack_limit):
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3" 
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = "0"
+    os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="bcb-mpl-"))
     
     if max_as_limit and max_data_limit and max_stack_limit:
         import resource
+
+        def _safe_setrlimit(limit_name, requested_bytes):
+            """Best-effort rlimit setter that tolerates macOS hard-limit caps.
+
+            On Darwin, attempting to raise the soft limit above the current hard
+            limit raises `ValueError: current limit exceeds maximum limit`. For
+            BigCodeBench we only need a restrictive ceiling, so we clamp the
+            requested value to the currently allowed hard limit when needed and
+            fail open if the platform refuses the limit entirely.
+            """
+            if not hasattr(resource, limit_name):
+                return
+
+            limit = getattr(resource, limit_name)
+            try:
+                cur_soft, cur_hard = resource.getrlimit(limit)
+            except Exception:
+                cur_soft, cur_hard = (None, None)
+
+            target = requested_bytes
+            if cur_hard not in (-1, resource.RLIM_INFINITY, None):
+                target = min(target, cur_hard)
+
+            if cur_soft not in (-1, resource.RLIM_INFINITY, None):
+                target = min(target, max(cur_soft, 0)) if target <= 0 else target
+
+            try:
+                resource.setrlimit(limit, (target, target))
+            except (ValueError, OSError):
+                try:
+                    fallback_hard = cur_hard
+                    if fallback_hard in (None,):
+                        return
+                    resource.setrlimit(limit, (target, fallback_hard))
+                except (ValueError, OSError):
+                    return
         
         max_as_limit = max_as_limit * 1024 * 1024
         max_data_limit = max_data_limit * 1024 * 1024
         max_stack_limit = max_stack_limit * 1024 * 1024
         
-        resource.setrlimit(
-            resource.RLIMIT_AS, (max_as_limit, max_as_limit)
-        )
-        resource.setrlimit(
-            resource.RLIMIT_DATA, (max_data_limit, max_data_limit)
-        )
+        _safe_setrlimit("RLIMIT_AS", max_as_limit)
+        _safe_setrlimit("RLIMIT_DATA", max_data_limit)
         if not platform.uname().system == "Darwin":
-            resource.setrlimit(
-                resource.RLIMIT_STACK, (max_stack_limit, max_stack_limit)
-            )
+            _safe_setrlimit("RLIMIT_STACK", max_stack_limit)
 
     faulthandler.disable()
 

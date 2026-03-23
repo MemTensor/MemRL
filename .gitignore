@@ -45,3 +45,6 @@ openspec/
 ## Local configs (may contain API keys / internal endpoints)
 configs/*.local.yaml
 configs/*.local.yml
+
+## Agent
+Agent.md

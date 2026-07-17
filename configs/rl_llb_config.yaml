@@ -154,9 +154,12 @@ rl_config:  # RL/value-driven knobs used by MemoryService and runners.
   q_init_neg: 0.5              # Init for negative Q-values.
   success_reward: 1.0          # Reward assigned on success.
   failure_reward: 0.0         # Reward assigned on failure.
-  sim_threshold: 0.5
-  #db_bench: 0.369
-  #os_interaction: 0.5
+  # Retrieval filtering depends on experiment.task. Aliases such as
+  # os_interaction -> os and db_bench -> db are resolved by RLConfig.
+  sim_threshold: 0.50          # Default and OSInteraction threshold.
+  sim_threshold_by_task:
+    os: 0.50
+    db: 0.37
   topk: 5                      # Candidate set size for value-aware selection.
   novelty_threshold: 0.85      # Similarity threshold to treat new memory as non-novel (merge).
   recency_boost: 0.0           # Optional recency weight in scoring (0 disables).

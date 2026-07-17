@@ -219,6 +219,13 @@ class RLConfig(BaseModel):
     # Retrieval filtering threshold used by runners when calling MemoryService.retrieve_query(...).
     # (Kept separate from `tau` to avoid conflating unknown-detection vs retrieval filtering.)
     sim_threshold: float = Field(default=0.5, description="Similarity threshold for retrieval filtering")
+    sim_threshold_by_task: Dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Optional task-specific retrieval thresholds. LLB canonicalizes "
+            "os_interaction to os and db_bench to db before lookup."
+        ),
+    )
     topk: int = Field(default=5, description="Candidate set size for value-aware selection")
     novelty_threshold: float = Field(default=0.85, description="Similarity threshold to treat as non-novel (merge)")
     recency_boost: float = Field(default=0.0, description="Optional recency weight for prioritization")
@@ -226,6 +233,19 @@ class RLConfig(BaseModel):
     q_min_threshold: float = Field(default=-0.8, description="Threshold for q min")
     weight_sim: float = Field(default=0.5, description="Weight for similarity in combined score")
     weight_q: float = Field(default=0.5, description="Weight for Q-value in combined score")
+
+    def resolve_sim_threshold(self, task: Optional[str] = None) -> float:
+        """Resolve the retrieval threshold for a benchmark task."""
+
+        task_key = str(task or "").strip().lower()
+        canonical_task = {
+            "os_interaction": "os",
+            "db_bench": "db",
+        }.get(task_key, task_key)
+        return float(
+            self.sim_threshold_by_task.get(canonical_task, self.sim_threshold)
+        )
+
 
 class MempConfig(BaseModel):
     """Main configuration class for the Memp system."""

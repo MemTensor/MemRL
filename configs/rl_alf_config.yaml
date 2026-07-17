@@ -73,6 +73,7 @@ rl_config:
   q_init_neg: 0          # negative q init
   success_reward: 1.0
   failure_reward: -1.0
+  sim_threshold: 0.62       # Retrieval filtering threshold (distinct from tau).
   topk: 3                  # candidate set size for value-aware selection
   novelty_threshold: 0.85  # similarity to treat as non-novel (merge)
   recency_boost: 0.0     # optional recency weight

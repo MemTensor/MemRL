@@ -111,7 +111,7 @@ rl_config:
   q_floor: null
   success_reward: 1.0
   failure_reward: -1.0
-  sim_threshold: 0.5
+  sim_threshold: 0.38       # Retrieval filtering threshold for BigCodeBench.
   topk: 5
   novelty_threshold: 0.85
   recency_boost: 0.0

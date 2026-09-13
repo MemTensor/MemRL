@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from math import isfinite
 import random
 
 from memos.mem_os.main import MOS
@@ -191,20 +192,26 @@ class QValueUpdater:
 
         old_meta = _meta_to_dict(getattr(item, "metadata", None))
         old_q = float(old_meta.get("q_value", self.cfg.q_init_pos))
-        target = float(reward) + (self.cfg.gamma * float(next_max_q or 0.0))
-        new_q = (1.0 - self.cfg.alpha) * old_q + self.cfg.alpha * target
+        reward = float(reward)
+        next_q = 0.0 if next_max_q is None else float(next_max_q)
+        alpha, gamma = float(self.cfg.alpha), float(self.cfg.gamma)
+        old_ma = float(old_meta.get("reward_ma", 0.0))
+        if not all(isfinite(value) for value in (old_q, reward, next_q, alpha, gamma, old_ma)):
+            raise ValueError("Q update inputs must be finite")
+        target = reward + gamma * next_q
+        new_q = (1.0 - alpha) * old_q + alpha * target
+        reward_ma = (1.0 - alpha) * old_ma + alpha * reward
+        if not all(isfinite(value) for value in (target, new_q, reward_ma)):
+            raise ValueError("Q update arithmetic must remain finite")
 
         # Optional Q floor: prevents Q from dropping below configured minimum.
         if getattr(self.cfg, "q_floor", None) is not None:
-            try:
-                new_q = max(float(self.cfg.q_floor), float(new_q))
-            except Exception:
-                pass
+            floor = float(self.cfg.q_floor)
+            if not isfinite(floor):
+                raise ValueError("Q floor must be finite")
+            new_q = max(floor, new_q)
 
         visits = int(old_meta.get("q_visits", 0)) + 1
-        # simple EMA for reward
-        old_ma = float(old_meta.get("reward_ma", 0.0))
-        reward_ma = (1.0 - self.cfg.alpha) * old_ma + self.cfg.alpha * float(reward)
 
         new_meta = old_meta | {
             "q_value": float(new_q),

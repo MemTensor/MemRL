@@ -778,14 +778,22 @@ class MemoryService:
         Update Q-value for the selected memory. If memory_id is None (null action),
         this is a no-op here (curation can be applied by caller if needed).
 
-        Returns the new Q if updated, else None.
+        Returns the new Q if updated, else None. Successful updates refresh the
+        retrieval Q cache using the same FIFO capacity policy as update_values.
         """
         if not getattr(self, 'enable_value_driven', False) or getattr(self, '_q_updater', None) is None:
             return None
         if memory_id is None:
             return None
         try:
-            return self._q_updater.update(memory_id, reward, next_max_q=next_max_q)
+            new_q = self._q_updater.update(memory_id, reward, next_max_q=next_max_q)
+            if new_q is not None:
+                if len(self._q_cache) >= self._q_cache_max_size:
+                    num_to_remove = max(1, self._q_cache_max_size // 10)
+                    for _ in range(num_to_remove):
+                        self._q_cache.pop(next(iter(self._q_cache)), None)
+                self._q_cache[memory_id] = new_q
+            return new_q
         except Exception as e:
             raise RuntimeError(f"Failed to update Q-value: {e}")
 

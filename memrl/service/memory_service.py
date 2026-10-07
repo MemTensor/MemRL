@@ -785,7 +785,10 @@ class MemoryService:
         if memory_id is None:
             return None
         try:
-            return self._q_updater.update(memory_id, reward, next_max_q=next_max_q)
+            new_q = self._q_updater.update(memory_id, reward, next_max_q=next_max_q)
+            if new_q is not None:
+                self._sync_cached_memory_q(memory_id, new_q)
+            return new_q
         except Exception as e:
             raise RuntimeError(f"Failed to update Q-value: {e}")
 
@@ -834,6 +837,7 @@ class MemoryService:
                     results[mem_id] = new_q
 
                     if new_q is not None:
+                        self._sync_cached_memory_q(mem_id, new_q)
                         # Check cache size limit (FIFO eviction)
                         if len(self._q_cache) >= self._q_cache_max_size:
                             num_to_remove = max(1, self._q_cache_max_size // 10)
@@ -846,6 +850,27 @@ class MemoryService:
                     results[mem_id] = None
                     logger.info(f"Failed to update Q-value for {mem_id}: {e}")
         return results
+
+    def _sync_cached_memory_q(self, memory_id: str, new_q: float) -> None:
+        """Keep the in-memory metadata fallback aligned with a persisted Q."""
+        item = getattr(self, "_mem_cache", {}).get(memory_id)
+        if item is None:
+            return
+        metadata = getattr(item, "metadata", None)
+        try:
+            if isinstance(metadata, dict):
+                metadata["q_value"] = new_q
+            elif metadata is not None:
+                metadata.q_value = new_q
+            else:
+                # Legacy memories may have no metadata at all. Rehydrate the
+                # persisted metadata instead of keeping a default-Q fallback.
+                getattr(self, "_mem_cache", {}).pop(memory_id, None)
+        except Exception:
+            # Do not leave an immutable or otherwise stale fallback object that
+            # can reintroduce the old Q after the fast cache evicts this ID.
+            getattr(self, "_mem_cache", {}).pop(memory_id, None)
+            logger.debug("Failed to sync cached Q for %s", memory_id, exc_info=True)
 
     def _add_to_mem_cache(self, mem_id: str, mem_obj: Any) -> None:
         """Add memory object to cache with FIFO eviction policy."""

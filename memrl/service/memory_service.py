@@ -1256,10 +1256,17 @@ class MemoryService:
         task_description: str,
         k: int = 5,
         threshold: float = 0.0,
+        *,
+        exclude_task_ids: Optional[List[Any]] = None,
+        rng: Optional[random.Random] = None,
+        raise_on_load_error: bool = False,
     ) -> Dict[str, Any]:
         """
         Unified retrieval using similarity-Q hybrid weighting.
         No two-stage retrieval; directly scores candidates by sim and Q mixture.
+        Excluded task/source-task IDs never enter scoring or exploration. When
+        exclusions remove a query's entire bucket, the next eligible query fills
+        its Top-K slot. An optional local RNG makes offline replays reproducible.
 
         Returns:
             {
@@ -1271,9 +1278,17 @@ class MemoryService:
         """
 
         try:
+            excluded = {str(task_id) for task_id in (exclude_task_ids or []) if task_id is not None}
+            selection_rng = rng if rng is not None else random
+            extended_result = exclude_task_ids is not None or rng is not None or raise_on_load_error
+
+            def empty_result(similarities=None, simmax=0.0):
+                result = {"actions": [], "selected": [], "candidates": [], "simmax": simmax}
+                return (result, similarities or []) if extended_result else result
+
             # -------- Basic checks --------
             if not hasattr(self, "dict_memory") or not self.dict_memory:
-                return {"actions": [], "selected": [], "candidates": [], "simmax": 0.0}
+                return empty_result()
 
             if not getattr(self, "embedding_provider", None):
                 raise RuntimeError("embedding_provider is required for local retrieval")
@@ -1285,7 +1300,7 @@ class MemoryService:
             # -------- Compute query embedding --------
             queries = list(self.dict_memory.keys())
             if not queries:
-                return {"actions": [], "selected": [], "candidates": [], "simmax": 0.0}
+                return empty_result()
 
             query_vec = get_embedding_with_retry(embed, [task_description])[0]
             query_norm = math.sqrt(sum(x * x for x in query_vec)) or 1e-8
@@ -1312,14 +1327,18 @@ class MemoryService:
                     sim_list.append((q, sim))
             sim_list.sort(key=lambda x: x[1], reverse=True)
 
-            if k is not None:
+            if k is not None and not excluded:
                 sim_list = sim_list[:k]
             if not sim_list:
-                return {"actions": [], "selected": [], "candidates": [], "simmax": 0.0}
+                return empty_result()
 
             # -------- Fetch memory objects, build candidate list --------
             candidates = []
+            eligible_similarities = []
             for q, sim in sim_list:
+                if excluded and k is not None and len(eligible_similarities) >= max(0, k):
+                    break
+                bucket_start = len(candidates)
                 mem_ids = self.dict_memory.get(q, [])
                 for mid in mem_ids:
                     try:
@@ -1334,8 +1353,16 @@ class MemoryService:
                             if mem_obj is not None:
                                 self._add_to_mem_cache(mid, mem_obj)
 
+                        if mem_obj is None and raise_on_load_error:
+                            raise RuntimeError(f"Memory {mid} is unavailable")
+
                         if mem_obj is not None:
                             md = getattr(mem_obj, "metadata", {})
+                            if excluded:
+                                md_dict = _meta_to_dict(md)
+                                task_ids = (extract_task_id(md_dict), md_dict.get("source_task_id"))
+                                if any(task_id is not None and str(task_id) in excluded for task_id in task_ids):
+                                    continue
                             content = None
                             try:
                                 if hasattr(md, "model_extra"):
@@ -1356,9 +1383,17 @@ class MemoryService:
                             )
                     except Exception:
                         logger.info(f"Failed to load memory {mid}", exc_info=True)
+                        if raise_on_load_error:
+                            raise
+
+                if len(candidates) > bucket_start:
+                    eligible_similarities.append((q, sim))
+
+            if excluded:
+                sim_list = eligible_similarities
 
             if not candidates:
-                return {"actions": [], "selected": [], "candidates": [], "simmax": 0.0}
+                return empty_result(sim_list)
 
             # -------- Compute Q value for each candidate --------
             enriched = []
@@ -1427,12 +1462,7 @@ class MemoryService:
                 enriched = [c for c in enriched if c["q_estimate"] >= q_min]
 
             if not enriched:
-                return {
-                    "actions": [],
-                    "selected": [],
-                    "candidates": [],
-                    "simmax": simmax,
-                }
+                return empty_result(sim_list, simmax)
 
             # -------- Hybrid scoring (similarity + Q) --------
             # You can adjust weights here
@@ -1467,8 +1497,8 @@ class MemoryService:
             # -------- epsilon-greedy sampling --------
             topk = min(self.rl_config.topk, len(enriched_sorted))
             if not getattr(self, "dedup_by_task_id", False):
-                if random.random() < self.rl_config.epsilon:
-                    selected = random.sample(enriched_sorted, topk)
+                if selection_rng.random() < self.rl_config.epsilon:
+                    selected = selection_rng.sample(enriched_sorted, topk)
                 else:
                     selected = enriched_sorted[:topk]
             else:
@@ -1476,8 +1506,8 @@ class MemoryService:
                 # - greedy: iterate score-desc
                 # - epsilon: shuffle before taking unique tasks
                 pool = list(enriched_sorted)
-                if random.random() < self.rl_config.epsilon:
-                    random.shuffle(pool)
+                if selection_rng.random() < self.rl_config.epsilon:
+                    selection_rng.shuffle(pool)
 
                 selected = []
                 seen_tasks: set[str] = set()
